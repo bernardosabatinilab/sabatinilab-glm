@@ -1,0 +1,1 @@
+{"irun": 0, "iXyd": 0, "igkwargs": 0, "X_y_dct": {"X_cols": {"photometryCenterInIndex": [0, 0], "photometrySideInIndex": [0, 0], "photometrySideInIndexr": [0, 0], "photometrySideOutIndex": [0, 0], "sl": [0, 0], "spnnrOff": [0, 0]}, "y_col": "gGLUr", "name": "base_simple"}, "glm_kwargs": {"max_iter": 10000, "fit_intercept": false, "alpha": 0.0, "l1_ratio": 0.0}}
