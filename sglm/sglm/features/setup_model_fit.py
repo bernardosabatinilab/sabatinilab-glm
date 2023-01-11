@@ -40,7 +40,7 @@ def timeshift_vals(dfrel, X_cols, neg_order=-20, pos_order=20, exclude_columns=N
 
 
 
-def timeshift_vals_by_dict(df, X_cols_dict, keep_nans=False):
+def timeshift_vals_by_dict(df, X_cols_dict, keep_nans=False, groupby_cols=[], shift_spacer='_', keep_unshifted=True):
     '''
     Timeshift values
     Args:
@@ -76,17 +76,23 @@ def timeshift_vals_by_dict(df, X_cols_dict, keep_nans=False):
         
         shift_amt_list = list(range(neg_order, pos_order + 1))
         for shift_amt in shift_amt_list:
+            if shift_amt == 0 and not keep_unshifted:
+                continue
+            
 #             df[X_col + '_' + str(shift_amt)] = df[X_col].shift(shift_amt)
-            df_x_sftd = df[[X_col]].shift(shift_amt).copy().rename({X_col: X_col + '_' + str(shift_amt)}, axis=1)
+            if groupby_cols:
+                df_x_sftd = df.groupby(groupby_cols)[[X_col]].shift(shift_amt).copy().rename({X_col: X_col + shift_spacer + str(shift_amt)}, axis=1)
+            else:
+                df_x_sftd = df[[X_col]].shift(shift_amt).copy().rename({X_col: X_col + shift_spacer + str(shift_amt)}, axis=1)
             combined_df_lst.append(df_x_sftd)
-            X_cols_sftd += [X_col + '_' + str(shift_amt)]
+            X_cols_sftd += [X_col + shift_spacer + str(shift_amt)]
             
     df = pd.concat(combined_df_lst, axis=1)
 #     assert np.all(df.dropna()==df2.dropna())
 #     print('Final columns', list(df2.columns))
 
     if not keep_nans:
-        na_drop_cols = [X_col + '_' + str(neg_order) for X_col in X_cols_dict] + [X_col + '_' + str(pos_order) for X_col in X_cols_dict]
+        na_drop_cols = [X_col + shift_spacer + str(neg_order) for X_col in X_cols_dict] + [X_col + shift_spacer + str(pos_order) for X_col in X_cols_dict]
         
         # print(df.isna().sum(axis=0))
         
@@ -95,11 +101,13 @@ def timeshift_vals_by_dict(df, X_cols_dict, keep_nans=False):
     
     return df, X_cols_sftd
 
+
+
 def X_cols_dict_to_default(X_cols_dict, neg_order=-20, pos_order=20):
     X_cols_dict = X_cols_dict.copy()
     for X_col in X_cols_dict:
         # print(X_cols_dict[X_col])
-        if X_cols_dict[X_col] == (0,0) or X_cols_dict[X_col] is None:
+        if list(X_cols_dict[X_col]) == [0,0] or X_cols_dict[X_col] is None:
             X_cols_dict[X_col] = (neg_order, pos_order)
             
     return X_cols_dict
@@ -132,7 +140,7 @@ def xy_pairs_to_widest_orders(X_y_pairings):
 
 
 
-def multi_file_analysis_prep(signal_files, X_cols_dict, file_ids=None):
+def multi_file_analysis_prep(signal_files, X_cols_dict, file_ids=None, shift_spacer='_sft_', keep_unshifted=True):
     '''
     
     Args:
@@ -149,6 +157,7 @@ def multi_file_analysis_prep(signal_files, X_cols_dict, file_ids=None):
     #                         ]
 
     signal_df_lst = []
+    signal_df_lst_unsft = []
     X_cols_sftd_lst = []
     for file_num in range(len(signal_files)):
     # for file_num in trange(len(signal_files)):
@@ -157,21 +166,21 @@ def multi_file_analysis_prep(signal_files, X_cols_dict, file_ids=None):
         tmp_signal_df['file_num'] = file_num
         tmp_signal_df['signal_file'] = None if file_ids is None else file_ids[file_num]
 
-
-        # tmp_signal_df, X_cols_sftd = timeshift_vals(tmp_signal_df,
-        #                                         list(tmp_signal_df.columns),
-        #                                         neg_order=neg_order,
-        #                                         pos_order=pos_order,
-        #                                         exclude_columns=exclude_columns
-        #                                         )
-        tmp_signal_df, X_cols_sftd = timeshift_vals_by_dict(tmp_signal_df, X_cols_dict)
-
-        signal_df_lst.append(tmp_signal_df)
+        tmp_signal_df_sft, X_cols_sftd = timeshift_vals_by_dict(tmp_signal_df, X_cols_dict, keep_nans=True, shift_spacer='_sft_', keep_unshifted=True)
+        signal_df_lst.append(tmp_signal_df_sft)
         X_cols_sftd_lst += [_ for _ in X_cols_sftd if _ not in X_cols_sftd_lst]
-    
+#         signal_df_lst_unsft.append(tmp_signal_df)
+
     signal_df = pd.concat(signal_df_lst, axis=0).copy()
-
-
+    
+#     signal_df_unsft = pd.concat(signal_df_lst_unsft, axis=0).copy()
+#     signal_df_unsft, X_cols_unsft = timeshift_vals_by_dict(signal_df_unsft, X_cols_dict, keep_nans=True, groupby_cols=['file_num'])
+    
+#     print('sdf', signal_df.shape)
+#     print('sdfu', signal_df_unsft.shape)
+#     return signal_df, signal_df_unsft
+#     assert np.all(signal_df.fillna(-1) == signal_df_unsft.fillna(-1))
+    
     signal_df['nTrial'] = signal_df['nTrial'].astype(int)
     signal_df['nEndTrial'] = signal_df['nEndTrial'].astype(int)
 
@@ -182,6 +191,12 @@ def multi_file_analysis_prep(signal_files, X_cols_dict, file_ids=None):
     signal_filenames = '-'.join([_.split('/')[-1].split('.')[0] for _ in signal_files])
     
     return [signal_df], X_cols_sftd_lst, None
+
+
+
+
+
+
 
 def single_file_analysis_prep(signal_files, X_cols_dict, file_ids=None):
     '''

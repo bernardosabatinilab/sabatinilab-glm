@@ -140,7 +140,7 @@ def define_side_agnostic_events(df):
 
 
 
-def add_timeshifts_to_col_list(all_cols, shifted_cols, neg_order=0, pos_order=1):
+def add_timeshifts_to_col_list(all_cols, shifted_cols, neg_order=0, pos_order=1, shift_spacer='_'):
     """
     Add a number of timeshifts to the shifted_cols name list provided for every column used. 
 
@@ -160,16 +160,16 @@ def add_timeshifts_to_col_list(all_cols, shifted_cols, neg_order=0, pos_order=1)
     """ 
     out_col_list = []
     for shift_amt in list(range(neg_order, 0))+list(range(1, pos_order + 1)):
-        out_col_list.extend([_ + f'_{shift_amt}' for _ in shifted_cols])
+        out_col_list.extend([_ + f'{shift_spacer}{shift_amt}' for _ in shifted_cols])
     return all_cols + out_col_list
 
 
-def col_shift_bounds_dict_to_col_list(X_cols_basis, X_cols_sftd):
+def col_shift_bounds_dict_to_col_list(X_cols_basis, X_cols_sftd, shift_spacer='_'):
         X_cols_sftd_basis = []
         for X_col_single in X_cols_basis:
             col_bounds = X_cols_basis[X_col_single]
             if col_bounds == (0,0):
-                cols = [_ for _ in X_cols_sftd if X_col_single+'_' in _ or X_col_single == _]
+                cols = [_ for _ in X_cols_sftd if X_col_single+shift_spacer in _ or X_col_single == _]
                 X_cols_sftd_basis += cols
             else:
                 cols = add_timeshifts_to_col_list([X_col_single], [X_col_single], neg_order=col_bounds[0], pos_order=col_bounds[1])
