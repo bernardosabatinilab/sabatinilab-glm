@@ -116,7 +116,14 @@ def set_port_entry_exit_rewarded_unrewarded_indicators(df):
     return df
 
 
-def define_side_agnostic_events(df):
+def define_side_agnostic_events(df, agnostic_definitions={'spn':['rpn','lpn'],
+                                                          'spx':['rpx','lpx'],
+                                                          'spnr':['rpnr','lpnr'],
+                                                          'spnnr':['rpnnr','lpnnr'],
+                                                          'spxr':['rpxr','lpxr'],
+                                                          'spxnr':['rpxnr','lpxnr'],
+#                                                           'sl':['rl','ll'],
+                                                         }):
     '''
     Define side agnostic events
     Args:
@@ -124,17 +131,12 @@ def define_side_agnostic_events(df):
     Returns:
         dataframe with added port entry/exit, and reward indicators
     '''
-    df = df.assign(**{
-        'spn':df['rpn']+df['lpn'],
-        'spx':df['rpx']+df['lpx'],
-
-        'spnr':df['rpnr']+df['lpnr'],
-        'spnnr':df['rpnnr']+df['lpnnr'],
-        'spxr':df['rpxr']+df['lpxr'],
-        'spxnr':df['rpxnr']+df['lpxnr'],
-
-        'sl':df['rl']+df['ll'],
-    })
+    
+    dct = {}
+    for key in agnostic_definitions:
+#         print(agnostic_definitions[key])
+        dct[key] = df[agnostic_definitions[key]].sum(axis=1)
+    df = df.assign(**dct)
 
     return df
 

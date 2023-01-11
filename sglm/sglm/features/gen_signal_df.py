@@ -126,11 +126,13 @@ def generate_Ab_labels(df_t):
     df_t = df_t.copy()
     
     df_t['wasRewarded'] = df_t['wasRewarded'].astype(bool)
-    df_t['prv_wasRewarded'] = df_t['wasRewarded'].shift(1).astype(bool)
+    df_t['prv_wasRewarded_nan'] = df_t['wasRewarded'].shift(1)
+    df_t['prv_wasRewarded'] = df_t['prv_wasRewarded_nan'].astype(bool)
     df_t['prv_choseLeft'] = df_t['choseLeft'].shift(1).astype(bool)
     df_t['prv_choseRight'] = df_t['choseRight'].shift(1).astype(bool)
     
     df_t['sameSide'] = ((df_t['choseLeft'] == df_t['prv_choseLeft'])&(df_t['choseRight'] == df_t['prv_choseRight'])).astype(bool).fillna(False)
+    
     df_t['label'] = '  '
 
     df_t['label'] = set_first_prv_trial_letter(df_t['prv_wasRewarded'], df_t['label'], loc=0)
@@ -139,17 +141,21 @@ def generate_Ab_labels(df_t):
     df_t['label_side'] = '  '
     df_t['label_side'] = set_current_trial_letter_side(df_t['prv_choseRight'], df_t['prv_wasRewarded'], df_t['label_side'], loc=0)
     df_t['label_side'] = set_current_trial_letter_side(df_t['choseRight'], df_t['wasRewarded'], df_t['label_side'], loc=1)
-
+    
+#     display('ls', df_t['label_side'])
+    
     df_t['label_rewarded'] = ' '
     df_t['label_rewarded'] = set_first_prv_trial_letter(df_t['wasRewarded'], df_t['label_rewarded'], loc=0)
-
+    
+#     display('lr', df_t['label_rewarded'])
     df_t['wasRewarded'] = df_t['wasRewarded'].fillna(False).astype(int)
     df_t['prv_wasRewarded'] = df_t['prv_wasRewarded'].fillna(False).astype(int)
     df_t['prv_choseLeft'] = df_t['prv_choseLeft'].astype(int)
     df_t['prv_choseRight'] = df_t['prv_choseRight'].astype(int)
+    
+#     display('prv_wasRewarded', df_t['prv_wasRewarded'])
 
-    df_t.loc[df_t['prv_wasRewarded'].isna(), 'label'] = np.nan
-    df_t.loc[df_t['prv_wasRewarded'].isna(), 'label'] = np.nan
+    df_t.loc[df_t['prv_wasRewarded_nan'].isna(), 'label'] = np.nan
     df_t = df_t.dropna()
 
     check_Ab_labels(df_t)
@@ -374,6 +380,10 @@ def generate_signal_df(signal_filename, table_filename,
 
     # Generate Ab Labels
     df_t = generate_Ab_labels(table_df)
+    
+#     display(df_t['label'])
+#     display(df_t['word'])
+    
     assert np.all(df_t['label'].dropna() == df_t['word'].dropna())
     # print(df_t[['label', 'word']])
 
