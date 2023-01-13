@@ -70,7 +70,11 @@ def rename_consistent_columns(df, rename_columns={'Ch1':'Ch1',
                                                   'leftOut':'lpx',
                                                   'leftLick':'ll',
                                                   'reward':'r',
-                                                  'noreward':'nr'}):
+                                                  'noreward':'nr',
+                                                  'right':'Rt',
+                                                  'left':'Lt',
+                                                 }
+                             ):
     '''
     Simplify variable names to match the GLM
 

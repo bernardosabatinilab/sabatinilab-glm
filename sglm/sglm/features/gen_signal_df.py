@@ -430,6 +430,12 @@ def generate_signal_df(signal_filename, table_filename,
 
         # Set nr to 1 - r
         signal_df[f'{col}nr'] = (1 - signal_df[f'{col}r'])
+        
+        # Set Rt to that if it was right selection, Left if it was selection
+        signal_df[f'{col}Rt'] = df_t_tmp.set_index(col)['choseRight']
+        signal_df[f'{col}Lt'] = df_t_tmp.set_index(col)['choseLeft']
+        
+        
 
         # Set side in / side out word values in signal to associated values in table. Else 0 if not in table.
         if col in ['photometrySideInIndex', 'photometrySideOutIndex']: #, 'photometryCenterInIndex']:
