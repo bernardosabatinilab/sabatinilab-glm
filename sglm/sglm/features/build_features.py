@@ -126,7 +126,7 @@ def define_side_agnostic_events(df, agnostic_definitions={'spn':['rpn','lpn'],
                                                           'spnnr':['rpnnr','lpnnr'],
                                                           'spxr':['rpxr','lpxr'],
                                                           'spxnr':['rpxnr','lpxnr'],
-#                                                           'sl':['rl','ll'],
+                                                          'sl':['rl','ll'],
                                                          }):
     '''
     Define side agnostic events
