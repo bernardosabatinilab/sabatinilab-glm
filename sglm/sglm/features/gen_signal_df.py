@@ -374,7 +374,7 @@ def generate_signal_df(signal_filename, table_filename,
     """
     # Load Signal Data
     signal_df = pd.read_csv(signal_filename)
-
+    
     # Load Table Data
     table_df = pd.read_csv(table_filename)
 
@@ -396,10 +396,12 @@ def generate_signal_df(signal_filename, table_filename,
 
     # Convert MATLAB 1 indexing to python 0 indexing
     df_t[table_index_columns] = matlab_indexing_to_python(df_t[table_index_columns])
-
-    # Replace center outs that got transferred to the next timestep to be equal to center in value
-    df_t = replace_missed_center_out_indexes(df_t, verbose=1)
-
+    
+#     print(1111111111)
+#     # Replace center outs that got transferred to the next timestep to be equal to center in value
+#     df_t = replace_missed_center_out_indexes(df_t, verbose=1)
+#     print(22222222222)
+    
     # 
     for col in table_index_columns:
         df_t_tmp = df_t[get_is_relevant_trial(df_t['hasAllPhotometryData'], df_t[col])].copy()
@@ -421,7 +423,10 @@ def generate_signal_df(signal_filename, table_filename,
         #     if len(eq.loc[[e]]) > 1:
         #         display(eq.loc[e])
         #         stop_flg = True
-
+        
+        dftti = df_t_tmp[[col]].value_counts()
+        assert len(dftti[dftti>1]) == 0
+        
         # If it's not nan and it shows up in the table set it to 1 in signal df, else 0.
         signal_df[col] = (df_t_tmp.set_index(col)['wasRewarded'] == df_t_tmp.set_index(col)['wasRewarded'])*1
 
