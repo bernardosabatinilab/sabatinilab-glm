@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: sglm
+Version: 0.1.0
+Summary: A GLM Pipeline for Neuroscience Analyses
+Author: Joshua A. Zimmer
+Author-email: Joshua_Zimmer@hms.harvard.edu
+License-File: LICENSE
