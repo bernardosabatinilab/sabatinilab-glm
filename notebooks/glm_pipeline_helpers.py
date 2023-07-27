@@ -36,8 +36,8 @@ class TrialPreprocessor():
         self.columnName_alignment_trial_start = columnName_alignment_trial_start
         self.columnName_alignment_trial_end = columnName_alignment_trial_end
         self.lst_strColumns_alignment = lst_strColumns_alignment
-        self.lst_strColumns_information_single = lst_strColumns_information_single
-        self.lst_strColumns_information_broadcast = lst_strColumns_information_broadcast
+        self.lst_strColumns_info_point = lst_strColumns_information_single
+        self.lst_strColumns_info_trial = lst_strColumns_information_broadcast
         self.bool_trialTable_matlab_indexed = bool_trialTable_matlab_indexed
 
         if alignment_dummyValue is not None:
@@ -65,7 +65,7 @@ class SignalPreprocessor():
 
     Args:
         TODO
-    
+
     Attributes:
         TODO
     """
