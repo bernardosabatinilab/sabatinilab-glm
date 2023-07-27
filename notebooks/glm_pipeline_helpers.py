@@ -78,10 +78,12 @@ class SignalPreprocessor():
             df_signal: pd.DataFrame,
             bool_append_dummy_row: bool=False,
             columnRenames_signal: Optional[dict]=None,
+            keep_row_column: Optional[str]=None,
         ):
         self.df_signal = df_signal
         self.bool_append_dummy_row = bool_append_dummy_row
         self.columnRenames_signal = columnRenames_signal
+        self.keep_row_column = keep_row_column
 
     def preprocess(self):
         """
@@ -110,14 +112,18 @@ class TrialSignalAligner():
     """
     def __init__(
             self,
+            lst_trialsignalaligner: Optional[List['TrialSignalAligner']]=None,
+        ):
+        if lst_trialsignalaligner is not None:
+            self.from_list(lst_trialsignalaligner)
+        else:
+            self.df_aligned = None
+
+    def align(
+            self,
             trialPreprocessor: TrialPreprocessor,
             signalPreprocessor: SignalPreprocessor,
         ):
-        self.trialPreprocessor = trialPreprocessor
-        self.signalPreprocessor = signalPreprocessor
-        self.df_alignedSignal = self.signalPreprocessor.df_signal.copy()
-
-    def align(self):
         """
         Align trial table and signal data
 
@@ -128,57 +134,96 @@ class TrialSignalAligner():
             TODO
         """
         _check_alignment_upperBound()
+        _set_sessionId()
+        _aligners_to_trialId() # 'nTrial' and 'nEndTrial'
+        _check_signal_trialIds() # check monotonically increasing and unqiue by trial
+        _aligners_to_onehots()
+        _alignerInfos_to_points()
+        _alignerInfos_to_broadcasts()
+        _check_alignedDfNames_notInSignal()
+        _combine_signalDf_alignedDf()
+        _drop_irrelevant_timestamps()
+        _add_timestamps() if self.str_timestamp_columns is not None else None
+        _assert_timestamps_monotonic_continuous() if self.str_timestamp_columns is not None else None
 
-        df_trial = self.trialPreprocessor.df_trial
-        df_signal = self.signalPreprocessor.df_signal
-        columnName_trialId = self.trialPreprocessor.columnName_trialId
 
-        if alignment_absent is not None:
-            self.alignment_absent = alignment_absent
-        else:
-            self.alignment_absent = alignment_dummyValue
+    # # Either lst_trialsignalaligner or trialPreprocessor and signalPreprocessor must be provided
+    #     assert (lst_trialsignalaligner is None) != (trialPreprocessor is None and signalPreprocessor is None), 'Either lst_trialsignalaligner or trialPreprocessor and signalPreprocessor must be provided'
+    #     if lst_trialsignalaligner is not None:
+    #         assert len(lst_trialsignalaligner) > 0, 'lst_trialsignalaligner must have at least one element'
+    #         assert all([isinstance(trialsignalaligner, TrialSignalAligner) for trialsignalaligner in lst_trialsignalaligner]), 'lst_trialsignalaligner must be a list of TrialSignalAligner objects'
+    #         lst_trialPreprocessor = [trialsignalaligner.trialPreprocessor for trialsignalaligner in lst_trialsignalaligner]
+    #         lst_signalPreprocessor = [trialsignalaligner.signalPreprocessor for trialsignalaligner in lst_trialsignalaligner]
+    #     else:
+            
+        
+    #     self.trialPreprocessor = trialPreprocessor
+    #     self.signalPreprocessor = signalPreprocessor
 
-        # Add trial number column to trial table
-        df_trial = _add_column_nTrial_raw(df_trial, columnName_trialId)
+# #
+#     def from_list(cls, lst_trialsignalaligner: List['TrialSignalAligner']) -> 'TrialSignalAligner':
+#         """
+#         Combine multiple TrialSignalAligner objects
 
-        # Convert trial table alignment information to signal columns
-        df_signal_aligned = alignmentInfoTrialPairs_to_signalColumns(
-            df_trial,
-            lst_strColumns_alignment,
-            df_signal.index,
-            fillValues_absent=self.alignment_absent,
-            fillValues_present_noInfo=1.0,
-        )
+#         Args:
+#             TODO
 
-        # Convert trial table information to signal columns
-        df_signal_aligned = informationTrialPairs_to_signalColumns(
-            df_trial,
-            lst_strColumns_information_single,
-            df_signal_aligned,
-            fillValues_absent=self.alignment_absent,
-            fillValues_present_noInfo=1.0,
-        )
+#         Returns:
+#             TODO
+#         """
+#         self.trialPreprocessor = lst_trialsignalaligner[0].trialPreprocessor
+#         self.df_alignedSignal = self.signalPreprocessor.df_signal.copy()
 
-        # Convert trial table broadcast information to signal columns
-        df_signal_aligned = informationBroadcastTrialPairs_to_signalColumns(
-            df_trial,
-            lst_strColumns_information_broadcast,
-            df_signal_aligned,
-            fillValues_absent=self.alignment_absent,
-            fillValues_present_noInfo=1.0,
-        )
+# df_trial = self.trialPreprocessor.df_trial
+# df_signal = self.signalPreprocessor.df_signal
+# columnName_trialId = self.trialPreprocessor.columnName_trialId
 
-        # Remove trial number column from trial table
-        df_trial = df_trial.drop(columns=[columnName_trialId])
+# if alignment_absent is not None:
+#     self.alignment_absent = alignment_absent
+# else:
+#     self.alignment_absent = alignment_dummyValue
 
-        # Remove alignment information columns from trial table
-        df_trial = df_trial.drop(columns=lst_strColumns_alignment)
+# # Add trial number column to trial table
+# df_trial = _add_column_nTrial_raw(df_trial, columnName_trialId)
 
-        # Remove information columns from trial table
-        df_trial = df_trial.drop(columns=lst_strColumns_information_single)
+# # Convert trial table alignment information to signal columns
+# df_signal_aligned = alignmentInfoTrialPairs_to_signalColumns(
+#     df_trial,
+#     lst_strColumns_alignment,
+#     df_signal.index,
+#     fillValues_absent=self.alignment_absent,
+#     fillValues_present_noInfo=1.0,
+# )
 
-        # Remove broadcast information columns from trial table
-        df_trial = df_trial.drop(columns=lst_strColumns_information)
+# # Convert trial table information to signal columns
+# df_signal_aligned = informationTrialPairs_to_signalColumns(
+#     df_trial,
+#     lst_strColumns_information_single,
+#     df_signal_aligned,
+#     fillValues_absent=self.alignment_absent,
+#     fillValues_present_noInfo=1.0,
+# )
+
+# # Convert trial table broadcast information to signal columns
+# df_signal_aligned = informationBroadcastTrialPairs_to_signalColumns(
+#     df_trial,
+#     lst_strColumns_information_broadcast,
+#     df_signal_aligned,
+#     fillValues_absent=self.alignment_absent,
+#     fillValues_present_noInfo=1.0,
+# )
+
+# # Remove trial number column from trial table
+# df_trial = df_trial.drop(columns=[columnName_trialId])
+
+# # Remove alignment information columns from trial table
+# df_trial = df_trial.drop(columns=lst_strColumns_alignment)
+
+# # Remove information columns from trial table
+# df_trial = df_trial.drop(columns=lst_strColumns_information_single)
+
+# # Remove broadcast information columns from trial table
+# df_trial = df_trial.drop(columns=lst_strColumns_information)
 
 
 def alignmentInfoTrialPairs_to_signalColumns(
@@ -305,8 +350,7 @@ if __name__ == "__main__":
 
     bool_drop_zeroAlignments = True
 
-    trialSignalAligned_agg = TrialSignalAlignerAggregator()
-
+    lst_trialSignalAligned = []
     for dict_inputdata in lst_dict_inputdata:
         # Load data
         trial = TrialPreprocessor(dict_inputdata['filepath_trial'])
@@ -323,7 +367,7 @@ if __name__ == "__main__":
         trialSignalAligned.timestamp();
 
         # Aggregate
-        trialSignalAligned_agg.add(trialSignalAligned);
+        lst_trialSignalAligned.add(trialSignalAligned);
 
     trialSignalAligned_agg.combine();
 
