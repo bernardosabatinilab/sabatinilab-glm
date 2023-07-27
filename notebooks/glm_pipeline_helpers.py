@@ -17,33 +17,32 @@ class TrialPreprocessor():
     Attributes:
         TODO
     """
-    def __init__(
-            self,
-            filepath_trial: Path,
-            sep: Optional[str] = None,
-            columnName_trialId: Optional[str]=None,
-            columnName_alignment_trial_start: Optional[str]=None,
-            columnName_alignment_trial_end: Optional[str]=None,
-            lst_strColumns_alignment: Optional[List[str]]=None,
-            lst_strColumns_information_single: Optional[List[str]]=None,
-            lst_strColumns_information_broadcast: Optional[List[str]]=None,
-            bool_trialTable_matlab_indexed: Optional[bool]=True,
-            alignment_dummyValue: Optional[int]=None,
-        ):
-        self.filepath_trial = filepath_trial
-        self.df_trial = pd.read_csv(filepath_trial) if not sep else pd.read_csv(filepath_trial, sep=sep)
-        self.columnName_trialId = columnName_trialId
-        self.columnName_alignment_trial_start = columnName_alignment_trial_start
-        self.columnName_alignment_trial_end = columnName_alignment_trial_end
-        self.lst_strColumns_alignment = lst_strColumns_alignment
-        self.lst_strColumns_info_point = lst_strColumns_information_single
-        self.lst_strColumns_info_trial = lst_strColumns_information_broadcast
-        self.bool_trialTable_matlab_indexed = bool_trialTable_matlab_indexed
+    # def __init__(
+    #         self,
+    #         df_trial: pd.DataFrame(),
+    #         str_trialId: Optional[str]=None,
+    #         str_alignmentCol_trial_start: Optional[str]=None,
+    #         str_alignmentCol_trial_end: Optional[str]=None,
+    #         lst_str_alignmentCols: Optional[List[str]]=None,
+    #         lst_str_infoCols_point: Optional[List[str]]=None,
+    #         lst_str_infoCols_broadcast: Optional[List[str]]=None,
+    #         bool_matlab_indexing: Optional[bool]=True,
+    #         alignment_dummyValue: Optional[int]=None,
+    #     ):
+    #     self.df_trial = df_trial
+    #     self.str_trialId = str_trialId
+    #     self.str_alignment_trial_start = str_alignmentCol_trial_start
+    #     self.str_alignment_trial_end = str_alignmentCol_trial_end
+    #     self.lst_str_alignment = lst_str_alignmentCols
+    #     self.lst_str_information_single = lst_str_infoCols_point
+    #     self.lst_str_information_broadcast = lst_str_infoCols_broadcast
+    #     self.bool_matlab_indexing = bool_matlab_indexing
+    #     self.alignment_dummyValue = alignment_dummyValue
 
-        if alignment_dummyValue is not None:
-            self.alignment_dummyValue = alignment_dummyValue
-        else:
-            self.alignment_dummyValue = 0 if self.bool_trialTable_matlab_indexed else -1
+    #     if alignment_dummyValue is not None:
+    #         self.alignment_dummyValue = alignment_dummyValue
+    #     else:
+    #         self.alignment_dummyValue = 0 if self.bool_trialTable_matlab_indexed else -1
 
     def preprocess(self):
         """
@@ -55,7 +54,12 @@ class TrialPreprocessor():
         Returns:
             TODO
         """
-        pass
+        _drop_alignment_absent()
+        _check_alignment_monotonic()
+        _check_alignment_lowerBound()
+        _alignment_columns_to_python_indexing() if self.bool_matlab_indexing else None
+        _create_trialId() if self.str_trialId is None else None
+        _rename_columns()
         
 class SignalPreprocessor():
     """
@@ -71,12 +75,12 @@ class SignalPreprocessor():
     """
     def __init__(
             self,
-            filepath_signal: Path,
-            sep: Optional[str] = None,
+            df_signal: pd.DataFrame,
+            bool_append_dummy_row: bool=False,
             columnRenames_signal: Optional[dict]=None,
         ):
-        self.filepath_signal = filepath_signal
-        self.df_signal = pd.read_csv(filepath_signal) if not sep else pd.read_csv(filepath_signal, sep=sep)
+        self.df_signal = df_signal
+        self.bool_append_dummy_row = bool_append_dummy_row
         self.columnRenames_signal = columnRenames_signal
 
     def preprocess(self):
@@ -89,7 +93,8 @@ class SignalPreprocessor():
         Returns:
             TODO
         """
-        pass
+        _rename_columns()
+        _append_dummy_row() if self.bool_append_dummy_row else None
 
 class TrialSignalAligner():
     """
@@ -122,6 +127,8 @@ class TrialSignalAligner():
         Returns:
             TODO
         """
+        _check_alignment_upperBound()
+
         df_trial = self.trialPreprocessor.df_trial
         df_signal = self.signalPreprocessor.df_signal
         columnName_trialId = self.trialPreprocessor.columnName_trialId
