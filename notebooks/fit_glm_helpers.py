@@ -65,7 +65,7 @@ def alignmentInfoTrialPairs_to_signalColumns(df_trial: pd.DataFrame, lst_columnN
         df (pd.DataFrame): Dataframe of signal columns
     """
 
-    lst_tmp = []
+    lst_tmp = [] 
     lst_output_column_names = []
 
     for str_columnPair_alignment, str_columnPair_information in lst_columnNamePairs_trial_alignInfo:
