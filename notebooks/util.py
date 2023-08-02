@@ -1,4 +1,4 @@
-from typing import DefaultDict, List, TypeVar, Optional, Union, List, Tuple, Any
+from typing import DefaultDict, List, TypeVar, Optional, Union, List, Tuple, Any, Dict
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -177,3 +177,56 @@ def check_monotonically_increasing_df(df: pd.DataFrame, lst_ignoreRowsWithValues
     else:
         assert np.all(df.iloc[:-1].max(axis=1).values < df.iloc[1:].min(axis=1).values), "Trial table alignment values must be monotonically increasing for non-zero entries."
 
+def sparse_dict_to_sparseArray(
+        sparse_dict: Dict[str, Dict[str, Any]],
+        num_rows: int,
+    ) -> Tuple[scipy.sparse.sparray, List[str]]:
+    """
+    Convert a sparse dictionary to a sparse array.
+
+    JZ 2023
+
+    Args:
+        sparse_dict (Dict[str, Dict[str, Any]]): Dictionary of sparse array data
+        * Structure should follow:
+                sparse_dict = {
+                    '{column_name}': {
+                        'row': row, # [Required]
+                        'col': col, # [Optional]
+                        'data': data, # Should not have any zero values # [Optional], Set to ones if not specified
+                    }
+                }
+        * If 'col' unspecified, its location will assumed to be its location in the dictionary.
+        num_rows (int): Number of rows in the sparse array
+
+    Returns:
+        arr_sparse (scipy.sparse.sparray): Sparse array
+        lst_output_column_names (List[str]): List of column names
+    """
+
+    for icolumn, (column, column_info) in enumerate(sparse_dict.items()):
+        if 'data' not in column_info.keys():
+            sparse_dict[column]['data'] = np.ones(column_info['row'].shape[0])
+        else:
+            assert np.all(column_info['data'] != 0), f"data: {column} should not have any zero values."
+        
+        if 'col' not in column_info.keys():
+            sparse_dict[column]['col'] = np.full(column_info['data'].shape[0], icolumn)
+    
+    all_data_unmapped = np.concatenate([column_info['data'] for column_info in sparse_dict.values()])
+    all_rows = np.concatenate([column_info['row'] for column_info in sparse_dict.values()])
+    all_col = np.concatenate([column_info['col'] for column_info in sparse_dict.values()])
+    num_cols = max(all_col) + 1
+
+    all_data_mapping = np.unique(all_data_unmapped, return_index=True)[1]
+    
+
+    # Assert all_data has no zero values
+    assert np.all(all_data != 0), "all_data should not have any zero values."
+
+    arr_sparse = scipy.sparse.coo_matrix(
+        (all_data, (all_rows, all_col)),
+        shape=(num_rows, num_cols)
+    )
+    # arr_sparse.fill_value = fillValue
+    return arr_sparse, list(sparse_dict.keys()), mapping

@@ -1,4 +1,4 @@
-from typing import Dict, List, TypeVar, Optional, Union, List, Tuple
+from typing import Dict, List, TypeVar, Optional, Union, List, Tuple, Any
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -14,24 +14,26 @@ class TrialPreprocessor():
     * Assert that the alignment indices do not go below 0
     * Assert that the alignment indices are monotonically increasing
     * Create a column for unique trial ids within file it does not already exist
-    * Rename columns to specifiied names
 
     JZ 2023
 
     Args:
-        - df_trial (pd.DataFrame): Dataframe of trial table alignment and information columns
+        - df_trial (pd.DataFrame): Dataframe of trial table alignment and information columns.
+        - sessionId (str): Session id to be used for all trials. If ``None``, a
+            session id will be generated for each file.
         - column_trialId (str): Name of column containing trial ids.
           If doesn't exist in df_trial, a new column with values 0-N will be created.
             (Default is ``'nTrial_raw'``)
+        - column_trial_start (str): Name of alignment column to identify trial start.
+            If ``None`` and ``column_trial_end`` is not ``None``, the value used will be the same
+            as ``column_trial_end``. At least one must be specified. (Default is ``None``)
+        - column_trial_end (str):  Name of alignment column to identify trial end.
+            If ``None`` and ``column_trial_start`` is not ``None``, the value used will be the
+            same as ``column_trial_start``. At least one must be specified. (Default is ``None``)
         - columns_alignment (Optional[List[str]]): List of alignment column names. (Alignment
             columns take on integer values associated with the index at which an event
             occurs in the signal table.) If ``None``, all columns in df_trial will be
             considered alignment columns. (Default is ``None``)
-        - column_trial_start (Optional[str]): Name of alignment column to identify trial start.
-            If ``None``, the first alignment value associated with a trial id is considered
-            trial start. (Default is ``None``)
-        - column_trial_end (Optional[str]): Name of alignment column to identify trial start.
-            If ``None``, the last observed value. (Default is ``None``)
         - columns_information_point (Optional[List[str]]): List of information column names
             that should be treated as point information (i.e. the value should only be associated
             with the specific alignment value assigned). If ``None``, no columns in df_trial will
@@ -49,8 +51,8 @@ class TrialPreprocessor():
             indexing. (Default is ``None``)
         - dict_column_drop_values (Optional[Dict[str, List]]): Dictionary of column names and
             values that should be dropped. (Default is ``None``)
-        - dict_column_rename (Optional[Dict[str, str]]): Dictionary of column names and
-            values that should be renamed. (Default is ``None``)
+        - fillValue_sparse (Tuple[type, Any]): Tuple of type and value with which to fill sparse
+            information columns. (Default is ``(float, 0.0)``)
 
     Attributes:
         - df_trial_raw (pd.DataFrame): Dataframe of trial table alignment and information columns
@@ -69,36 +71,53 @@ class TrialPreprocessor():
             dropped.
         - dict_column_drop_values (Optional[Dict[str, List]]): Dictionary of column names and
             values that should be dropped.
-        - dict_column_rename (Optional[Dict[str, str]]): Dictionary of column names and
-            values that should be renamed.
         - df_trial (pd.DataFrame): Dataframe of postprocessed trial table
     """
     def __init__(
             self,
             df_trial: pd.DataFrame,
+            sessionId: str,
+            column_sessionId: str='sessionId',
             column_trialId: str='nTrial_raw',
-            columns_alignment: Optional[List[str]]=None,
             column_trial_start: Optional[str]=None,
             column_trial_end: Optional[str]=None,
+            columns_alignment: Optional[List[str]]=None,
             columns_information_point: Optional[List[str]]=None,
             columns_information_broadcast: Optional[List[str]]=None,
-            matlab_indexing: bool=True,
             alignment_ignoreValues: Optional[List[Union[int, float]]]=[-1, 0],
             dict_column_drop_values: Optional[Dict[str, List]]=None,
-            dict_column_rename: Optional[Dict[str, str]]=None,
+            fillValue_sparse: Tuple[type, Any]=(float, 0.0),
+            matlab_indexing: bool=True,
         ):
+
         self.df_trial_raw = df_trial
+        self.sessionId = sessionId
+        self.column_sessionId = column_sessionId
         self.column_trialId = column_trialId
+
+        # Assert at least one of column_trial_start and column_trial_end is specified
+        if column_trial_start is None and column_trial_end is None:
+            raise ValueError('At least one of column_trial_start and column_trial_end must be specified.')
+        elif column_trial_start is None and column_trial_end is not None:
+            column_trial_start = column_trial_end
+        elif column_trial_start is not None and column_trial_end is None:
+            column_trial_end = column_trial_start
         self.column_trial_start = column_trial_start
         self.column_trial_end = column_trial_end
+
         self.columns_alignment = columns_alignment if columns_alignment is not None else list(df_trial.columns)
         self.columns_information_point = columns_information_point if columns_information_point is not None else []
         self.columns_information_broadcast = columns_information_broadcast if columns_information_broadcast is not None else []
         self.matlab_indexing = matlab_indexing 
         self.alignment_ignoreValues = alignment_ignoreValues if alignment_ignoreValues is not None else ([0] if matlab_indexing else [-1])
         self.dict_column_drop_values = dict_column_drop_values if dict_column_drop_values is not None else {}
-        self.dict_column_rename = dict_column_rename if dict_column_rename is not None else {}
+        self.fillValue_sparse = fillValue_sparse
+
         self.df_trial = None
+        self.df_trial_ids = None
+        self.df_trial_links = None
+        self.df_trial_sparse_ptr = None
+        self.df_trial_sparse_data = None
 
     def preprocess(self):
         """
@@ -112,8 +131,37 @@ class TrialPreprocessor():
         self._check_alignment_lowerBound(lowerBound=0)
         self._check_alignment_monotonic()
         
-        self.df_trial[self.column_trialId] = np.arange(self.df_trial.shape[0]) if self.column_trialId not in self.df_trial.columns else self.df_trial[self.column_trialId]
-        self.df_trial.rename(columns=self.dict_column_rename, inplace=True)
+        self.df_trial[self.column_trialId] = np.arange(1, self.df_trial.shape[0]+1) if self.column_trialId not in self.df_trial.columns else self.df_trial[self.column_trialId]
+        
+        if self.column_trial_start is not None and self.column_trial_end is not None:
+            self.column_trial_start = self.column_trial_start
+        if self.column_trial_end is not None:
+            self.column_trial_end = self.column_trial_end
+        
+        self.sparseDict_trialId = { # self.df_trial_ids = self.df_trial[lst_columns_trial_ids + [self.column_trial_start, self.column_trial_end]]
+            'trial_start': {
+                'row': self.df_trial[self.column_trial_start].values,
+                'data': self.df_trial[self.column_trialId].values,
+            },
+            'trial_end': {
+                'row': self.df_trial[self.column_trial_end].values,
+                'data': self.df_trial[self.column_trialId].values,
+            },
+        }
+
+        self.sparseDict_trialPoints = {
+            'row': {column: self.df_trial[column].values for column in self.columns_alignment},
+            'data': {column: self.df_trial[column].values for column in self.columns_information_point},
+        }
+
+        if self.sessionId is not None:
+            assert self.column_sessionId not in self.df_trial.columns, f"sessionId column {self.column_sessionId} must not be in trial table if sessionId is specified"
+            self.df_trial[self.column_sessionId] = self.sessionId
+        else:
+            assert self.column_sessionId in self.df_trial.columns, f"sessionId column {self.column_sessionId} must be in trial table if sessionId is not specified"
+        lst_columns_trial_ids = [self.column_sessionId, self.column_trialId]
+
+        self.broadcastDf_trialLinks = self.df_trial[lst_columns_trial_ids + self.columns_information_broadcast]
     
     def _drop_rows_by_column_specified_values(self):
         """
@@ -163,8 +211,16 @@ class SignalPreprocessor():
 
     Args:
         - df_signal (pd.DataFrame): Dataframe of signal data
-        - columnRenames_signal (Optional[dict]): Dictionary of column names
-            and values that should be renamed.
+        - columns_dense (Optional[List[str]]): List of column names that are dense
+            and require saving all values. (e.g. signal traces, timestamps, session
+            ids, trial ids, etc.). If ``None``, all columns are assumed to be dense.
+            (Default is ``None``)
+        - columns_sparse (Optional[List[str]]): List of column names that are sparse
+            and require saving only a subset of values. (e.g. one-hot behavioral
+            columns). If ``None``, all columns are assumed to not be sparse.
+            (Default is ``None``)
+        - fillValue_sparse (Tuple[type, Any]): Tuple of type and value with which to fill sparse
+            information columns. (Default is ``(float, 0.0)``)
 
     Attributes:
         TODO
@@ -172,23 +228,24 @@ class SignalPreprocessor():
     def __init__(
             self,
             df_signal: pd.DataFrame,
-            columnRenames_signal: Optional[dict]=None,
+            sessionId: str,
+            columns_dense: Optional[List[str]]=None,
+            columns_sparse: Optional[List[str]]=None,
+            fillValue_sparse: Tuple[type, Any]=(float, 0.0),
         ):
-        self.df_signal = df_signal
-        self.columnRenames_signal = columnRenames_signal
+        self.df_signal_raw = df_signal
+        self.sessionId = sessionId
+        self.columns_dense = list(self.df_signal_raw.columns) if columns_dense is None else columns_dense
+        self.columns_sparse = [] if columns_sparse is None else columns_sparse
+        self.fillValue_sparse = fillValue_sparse
 
     def preprocess(self):
         """
         Preprocess signal data
         """
-        self._rename_columns()
-
-    def _rename_columns(self):
-        """
-        Rename columns of signal data
-        """
-        if self.columnRenames_signal is not None:
-            self.df_signal.rename(columns=self.columnRenames_signal, inplace=True)
+        self.df_signal = self.df_signal_raw.copy()
+        self.denseDf_signal = self.df_signal[self.columns_dense]
+        self.sparseDf_signal = self.df_signal[self.columns_sparse].astype(pd.SparseDtype(self.fillValue_sparse[0], fill_value=self.fillValue_sparse[1]))
 
 class TrialSignalAligner():
     """
@@ -198,20 +255,19 @@ class TrialSignalAligner():
     """
     def __init__(
             self,
-            sessionId: str,
             trialPreprocessor: Optional[TrialPreprocessor]=None,
             signalPreprocessor: Optional[SignalPreprocessor]=None,
             lst_trialsignalaligner: Optional[List['TrialSignalAligner']]=None,
+            sessionId: Optional[str]=None,
         ):
         """
         Args:
-            - sessionId (str): Session id
             - trialPreprocessor (Optional[TrialPreprocessor]): TrialPreprocessor to preprocess trial table data
             - signalPreprocessor (Optional[SignalPreprocessor]): SignalPreprocessor to preprocess signal data
             - lst_trialsignalaligner (Optional[List['TrialSignalAligner']]): List of TrialSignalAligners
+            - sessionId (str): Session id
         """
         assert (lst_trialsignalaligner is None) != (trialPreprocessor is None and signalPreprocessor is None), "Either lst_trialsignalaligner or trialPreprocessor and signalPreprocessor must be specified"
-        self.sessionId = sessionId
         if lst_trialsignalaligner is not None:
             self.trialPreprocessor = None
             self.signalPreprocessor = None
@@ -220,6 +276,17 @@ class TrialSignalAligner():
             self.trialPreprocessor = trialPreprocessor
             self.signalPreprocessor = signalPreprocessor
             self.df_aligned = None
+
+        # Assert sessionId between trialPreprocessor and signalPreprocessor are the same and set sessionId if specified
+        if self.trialPreprocessor is not None and self.signalPreprocessor is not None:
+            assert self.trialPreprocessor.sessionId == self.signalPreprocessor.sessionId, "trialPreprocessor and signalPreprocessor must have the same sessionId"
+            if sessionId is not None:
+                assert sessionId == self.trialPreprocessor.sessionId, "sessionId must match trialPreprocessor sessionId"
+                self.sessionId = sessionId
+            else:
+                self.sessionId = self.trialPreprocessor.sessionId
+
+        self.sessionId = sessionId
 
     def from_list(self, lst_trialsignalaligner: List['TrialSignalAligner']):
         """
@@ -247,7 +314,7 @@ class TrialSignalAligner():
         """
         assert self.trialPreprocessor is not None and self.signalPreprocessor is not None, "trialPreprocessor and signalPreprocessor must be specified in __init__ to run align"
         self._check_alignment_upperBound(upperBound=self.signalPreprocessor.df_signal.shape[0], allow_equal=False)
-        self._aligners_to_trialId() # 'nTrial' and 'nEndTrial'
+        self._aligners_to_trialId() # 'trial_bounded_start', 'trial_bounded_end', 'trial_bounds_diff'
         self._aligners_to_onehots()
         self._alignerInfos_to_points()
         self._alignerInfos_to_broadcasts()
@@ -278,57 +345,93 @@ class TrialSignalAligner():
         """
         assert self.trialPreprocessor is not None and self.signalPreprocessor is not None, "trialPreprocessor and signalPreprocessor must be specified in __init__ to run align"
         
-        # Associate the trial id with each signal row in new columns based on the alignment columns (only for trial start and trial end if specified)
-        if self.trialPreprocessor.column_trial_start is None:
-            trial_alignment_columns = self.trialPreprocessor.columns_alignment
-        else:
-            trial_alignment_columns = [self.trialPreprocessor.column_trial_start, self.trialPreprocessor.column_trial_end]        
-        
-        # alignment_trialId_columnPairs = [(alignment_column, self.trialPreprocessor.column_trialId) for alignment_column in trial_alignment_columns]
-        # arr_aligned_trial_ids, aligned_trial_ids = util.alignmentInfoTrialPairs_to_signalColumns(
-        #     self.trialPreprocessor.df_trial,
-        #     alignment_trialId_columnPairs,
-        #     self.signalPreprocessor.df_signal.shape[0],
-        #     fillValues_absent=np.nan,
-        #     fillValues_present_noInfo=np.nan,
-        # )
-        arr_aligned_trial_ids, aligned_trial_ids = util.alignmentInfoTrialPairs_to_signalColumns_sparse(
-            self.trialPreprocessor.df_trial[trial_alignment_columns],
-            self.trialPreprocessor.df_trial[self.trialPreprocessor.column_trialId],
-            self.signalPreprocessor.df_signal.shape[0],
-            include_alignment_as_info=False,
-            fillValues_absent=np.nan,
-            fillValues_present_noInfo=np.nan,
-        )
-        
-        self.df_trialIds = pd.DataFrame(
-            arr_aligned_trial_ids.toarray(),
-            columns=aligned_trial_ids,
-            index=self.signalPreprocessor.df_signal.index
-        )
+        fill_value = np.nan
 
-        # Combine first the trial ids matched to the alignment columns
-        srs_trialIds = self.df_trialIds.iloc[:, 0]
-        for i in range(1, self.df_trialIds.shape[1]):
-            srs_trialIds = srs_trialIds.combine_first(self.df_trialIds.iloc[:, i])
-
+        sparr_trialId_setup, columnNames = util.sparse_dict_to_sparseArray(
+            sparse_dict=self.trialPreprocessor.sparseDict_trialId,
+            num_rows=self.signalPreprocessor.df_signal.shape[0],
+        )
+        self.denseDf_trialIds = pd.DataFrame(
+            sparr_trialId_setup.todense(),
+            columns=columnNames
+        ).astype(float)
+        self.denseDf_trialIds = self.denseDf_trialIds.replace(0.0, fill_value)
+        
         # Create a new column ffill-ed from the combine first to create nTrial
-        self.df_trialIds['nTrial'] = srs_trialIds.ffill()
-        assert np.all(self.df_trialIds['nTrial'].diff() >= 0), "nTrial must be monotonically increasing"
+        self.denseDf_trialIds['trial_bounded_start'] = self.denseDf_trialIds['trial_start'].ffill()
+        assert np.all(self.denseDf_trialIds['trial_bounded_start'].diff().fillna(0) >= 0), "trial_bounded_start must be monotonically increasing"
 
         # Create a new column bfill-ed from the combine first to create nEndTrial
-        self.df_trialIds['nEndTrial'] = srs_trialIds.bfill()
-        assert np.all(self.df_trialIds['nEndTrial'].diff() >= 0), "nEndTrial must be monotonically increasing"
+        self.denseDf_trialIds['trial_bounded_end'] = self.denseDf_trialIds['trial_end'].bfill()
+        assert np.all(self.denseDf_trialIds['trial_bounded_end'].diff().fillna(0) >= 0), "trial_bounded_end must be monotonically increasing"
 
         # Create a new column that is the difference between nTrial and nEndTrial
-        self.df_trialIds['nTrial_diff'] = self.df_trialIds['nTrial'] - self.df_trialIds['nEndTrial']
+        self.denseDf_trialIds['trial_bounds_diff'] = self.denseDf_trialIds['trial_bounded_end'] - self.denseDf_trialIds['trial_bounded_start']
 
-        self.df_trialIds = self.df_trialIds[['nTrial', 'nEndTrial', 'nTrial_diff']]
-    
+        assert np.all(self.denseDf_trialIds['trial_bounds_diff'].dropna() >= 0), "trial_bounds_diff must be nan or >= 0 since every trial end must be preceded by a trial start"
+
+        self.denseDf_trialIds = self.denseDf_trialIds[[
+             'trial_bounded_start',
+             'trial_bounded_end',
+             'trial_bounds_diff'
+        ]]
+
     def _aligners_to_onehots(self):
         """
-        Create onehots from alignment columns
+        Align trial table to create onehots
         """
+        assert self.trialPreprocessor is not None and self.signalPreprocessor is not None, "trialPreprocessor and signalPreprocessor must be specified in __init__ to run align"
+        
+        sparse_aligner_dict = {
+            aligner_column: {
+                'row': aligner_column_values
+            } for aligner_column, aligner_column_values in self.trialPreprocessor.sparseDict_trialPoints['row'].items()
+        }
+
+        sparr_aligners_setup, columnNames = util.sparse_dict_to_sparseArray(
+            sparse_dict=sparse_aligner_dict,
+            num_rows=self.signalPreprocessor.df_signal.shape[0],
+        )
+
+        self.sparseDf_onehots = pd.DataFrame.sparse.from_spmatrix(
+            sparr_aligners_setup,
+            columns=columnNames
+        ).astype(float)
+
+    def _alignerInfos_to_points(self):
+        """
+        Align trial table to create points
+        """
+        assert self.trialPreprocessor is not None and self.signalPreprocessor is not None, "trialPreprocessor and signalPreprocessor must be specified in __init__ to run align"
+        
+        # Set self.sparseDf_points to None, print a message, and return if the lengths of either self.trialPreprocessor.sparseDict_trialPoints['row'] or self.trialPreprocessor.sparseDict_trialPoints['data'] is zero
+        if len(self.trialPreprocessor.sparseDict_trialPoints['row']) == 0 or len(self.trialPreprocessor.sparseDict_trialPoints['data']) == 0:
+            self.sparseDf_points = pd.DataFrame.sparse(pd.DataFrame(index=self.signalPreprocessor.df_signal.index))
+            print("self.trialPreprocessor.sparseDict_trialPoints['row'] or self.trialPreprocessor.sparseDict_trialPoints['data'] is empty. Setting self.sparseDf_points to empty dataframe.")
+            return
+
+        sparse_alignerInfo_dict = {}
+        for aligner_column, aligner_column_values in self.trialPreprocessor.sparseDict_trialPoints['row'].items():
+            for info_column, info_column_values in self.trialPreprocessor.sparseDict_trialPoints['data'].items():
+                sparse_alignerInfo_dict[(aligner_column, info_column)] = {
+                    'row': aligner_column_values,
+                    'data': info_column_values
+                }
+
+        sparr_alignerInfo_setup, columnNames = util.sparse_dict_to_sparseArray(
+            sparse_dict=sparse_alignerInfo_dict,
+            num_rows=self.signalPreprocessor.df_signal.shape[0],
+        )
+
+        self.sparseDf_points = pd.DataFrame.sparse.from_spmatrix(
+            sparr_alignerInfo_setup,
+            columns=columnNames
+        ).astype(float)
+
+        print()
+
+    # def _alignerInfos_to_broadcasts(self):
+    #     broadcastDf_trialLinks
 
         
     ############################################################################################################
@@ -361,57 +464,69 @@ if __name__ == '__main__':
     'bool_trialTable_matlab_indexed': True,
     'columnName_trialTable_trialId': None,
     'columnRenames_signal': {'Ch1': 'gDA', 'Ch5': 'gACH'},
-    'columnRenames_trial': None}
+    'columnRenames_trial': {
+                'photometryCenterInIndex': 'CI',
+                'photometryCenterOutIndex': 'CO',
+                'photometrySideInIndex': 'SI',
+                'photometrySideOutIndex': 'SO',
+                'hasAllPhotometryData': 'hasAllData',
+                'wasRewarded': 'rew',
+                'word': 'wd',
+        }
+    }
 
-    columnName_alignment_trial_start = 'photometryCenterInIndex'
-    columnName_alignment_trial_end = 'photometrySideOutIndex'
+    columnName_alignment_trial_start = 'CI'
+    columnName_alignment_trial_end = 'SO'
 
     # Note: Alignment values of 0 for Matlab-indexed trial tables will be treated as "no-data" values
     # and and -1 for Python-indexed trial tables. Matlab-indexed trial tables should only have values
     # >= 0 in and >= -1 in Python.
     lst_columnNames_trialTable_alignment = [
-        'photometryCenterInIndex',
-        'photometryCenterOutIndex',
-        'photometrySideInIndex',
-        'photometrySideOutIndex',
+        'CI',
+        'CO',
+        'SI',
+        'SO',
     ]
 
     lst_columnNames_trialTable_information = [
         # 'nTrial_raw', 
-        'hasAllPhotometryData',
-        'wasRewarded', 'word',
+        'hasAllData',
+        'rew', 'wd',
     ]
+    
+    sessionId = 'test1'
 
     # Test trial table preprocessing
     trial = TrialPreprocessor(
-        pd.read_csv(dict_inputdata['filepath_trial']),
-        column_trialId = None,
-        columns_alignment = lst_columnNames_trialTable_alignment,
+        pd.read_csv(
+            dict_inputdata['filepath_trial']
+        ).rename(dict_inputdata['columnRenames_trial'], axis=1),
+        sessionId = sessionId,
+        column_sessionId = 'sessionId',
+        column_trialId = 'nTrial_raw',
         column_trial_start = columnName_alignment_trial_start,
         column_trial_end = columnName_alignment_trial_end,
-        columns_information_point = None,
+        columns_alignment = lst_columnNames_trialTable_alignment,
+        columns_information_point = ['wd'],
         columns_information_broadcast = lst_columnNames_trialTable_information,
         matlab_indexing = True,
         alignment_ignoreValues = [-1, 0],
         dict_column_drop_values = {},
-        dict_column_rename = {
-            'photometryCenterInIndex': 'CI',
-            'photometryCenterOutIndex': 'CO',
-            'photometrySideInIndex': 'SI',
-            'photometrySideOutIndex': 'SO',
-            'hasAllPhotometryData': 'hasAllData',
-            'wasRewarded': 'rew',
-            'word': 'wd',
-        }
     )
     trial.preprocess();
 
     signal = SignalPreprocessor(
-        pd.read_csv(dict_inputdata['filepath_signal']),
+        pd.read_csv(
+            dict_inputdata['filepath_signal']
+        ).rename(dict_inputdata['columnRenames_signal'], axis=1),
+        columns_sparse=[],
+        columns_dense=[],
+        sessionId = sessionId,
     )
     signal.preprocess();
 
-    trialSignalAligned = TrialSignalAligner(trial, signal)
+    trialSignalAligned = TrialSignalAligner(trial, signal, sessionId=sessionId)
+    trialSignalAligned.align()
     print()
 
 
