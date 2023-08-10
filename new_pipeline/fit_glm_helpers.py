@@ -97,6 +97,55 @@ class Vector():
     def __str__(self):
         return self.__repr__()
     
+    def __and__(self, other: 'Vector'):
+
+        assert self.values is None or other.values is None, 'Only one of the subcomponents can have values <> None.'
+
+        set_nrows = set([self.nrows, other.nrows])
+        assert len(set_nrows) == 1, 'All subcomponents must have the same number of nrows.'
+        nrows = list(set_nrows)[0]
+
+        set_fill_values = set([self.fill_values, other.fill_values])
+        assert len(set_fill_values) == 1, 'All subcomponents must have the same fill values.'
+        fill_values = list(set_fill_values)[0]
+        
+        if self.values is not None:
+            values = self.values
+            indices_values = self.indices
+            indices_other = other.indices
+        elif other.values is not None:
+            values = other.values
+            indices_values = other.indices
+            indices_other = self.indices
+        else:
+            values = None
+            indices_values = self.indices
+            indices_other = other.indices
+
+            ##### TODO: PICK UP HERE -- IMPLEMENTING THE TRANSITION FROM VALUES / INDICES TO SITUATIONS WHERE ONE OR OTHER NOT SPECIFIED
+        
+        
+        if indices_values is None and indices_other is None:
+            indices = None
+        else:
+            indices_intersected = np.arange(self.nrows)
+            if indices_values is not None:
+                indices_intersected = np.intersect1d(indices_intersected, indices_values)
+            if other.indices is not None:
+                indices_intersected = np.intersect1d(indices_intersected, indices_other)
+            
+            values, indices = values[np.isin(indices_values, indices_intersected)], indices_values[np.isin(indices_values, indices_intersected)]
+
+        name_tuple = (self.name_tuple, other.name_tuple)
+        return Vector(
+            name_tuple=name_tuple,
+            values=values,
+            indices=indices,
+            nrows=nrows,
+            fill_values=fill_values, # Not yet implemented: Non-zero fill-value
+            dtype='numerical',
+        )
+    
     def todense(self):
         values = np.zeros(self.nrows)
         indices_arangeFilled = self.indices if self.indices is not None else np.arange(len(values))
