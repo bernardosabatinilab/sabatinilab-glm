@@ -22,18 +22,8 @@ def construct_vector_or_matrix(
     dtype = dtype if dtype is not None else 'numerical' # self.
     nrows = nrows if nrows is not None else np.max(indices_arangeFilled) + 1 # self.
 
-    if dtype != 'categorical': # self.
-        name_tuple = (name,) # self.
-        # subvectors = {} # self.
-        # subvectors[name] = Vector(
-        #     name_tuple=name_tuple,
-        #     values=values,
-        #     indices=indices,
-        #     nrows=nrows,
-        #     fill_values=fill_values,
-        #     dtype='numerical',
-        # )
-        # return Matrix(**subvectors)
+    if dtype != 'categorical':
+        name_tuple = (name,)
         return Matrix(
             Vector(
                 name_tuple=name_tuple,
@@ -68,7 +58,7 @@ def construct_vector_or_matrix(
 class Vector():
     def __init__(
             self,
-            name_tuple: Tuple[str],
+            name_tuple: Union[str, Tuple[str]],
             values: Optional[np.ndarray]=None,
             indices: Optional[np.ndarray]=None,
             nrows: Optional[int]=None,
@@ -97,54 +87,56 @@ class Vector():
     def __str__(self):
         return self.__repr__()
     
-    def __and__(self, other: 'Vector'):
-
-        assert self.values is None or other.values is None, 'Only one of the subcomponents can have values <> None.'
-
-        set_nrows = set([self.nrows, other.nrows])
-        assert len(set_nrows) == 1, 'All subcomponents must have the same number of nrows.'
-        nrows = list(set_nrows)[0]
-
-        set_fill_values = set([self.fill_values, other.fill_values])
-        assert len(set_fill_values) == 1, 'All subcomponents must have the same fill values.'
-        fill_values = list(set_fill_values)[0]
+    def __and__(self, other: Union['Vector', 'Matrix']):
         
-        if self.values is not None:
-            values = self.values
-            indices_values = self.indices
-            indices_other = other.indices
-        elif other.values is not None:
-            values = other.values
-            indices_values = other.indices
-            indices_other = self.indices
-        else:
-            values = None
-            indices_values = self.indices
-            indices_other = other.indices
+        if isinstance(other, Vector):
+            assert self.values is None or other.values is None, 'Only one of the subcomponents can have values <> None.'
+            set_nrows = set([self.nrows, other.nrows])
+            assert len(set_nrows) == 1, 'All subcomponents must have the same number of nrows.'
+            nrows = list(set_nrows)[0]
 
-            ##### TODO: PICK UP HERE -- IMPLEMENTING THE TRANSITION FROM VALUES / INDICES TO SITUATIONS WHERE ONE OR OTHER NOT SPECIFIED
-        
-        
-        if indices_values is None and indices_other is None:
-            indices = None
-        else:
-            indices_intersected = np.arange(self.nrows)
-            if indices_values is not None:
-                indices_intersected = np.intersect1d(indices_intersected, indices_values)
-            if other.indices is not None:
-                indices_intersected = np.intersect1d(indices_intersected, indices_other)
+            set_fill_values = set([self.fill_values, other.fill_values])
+            assert len(set_fill_values) == 1, 'All subcomponents must have the same fill values.'
+            fill_values = list(set_fill_values)[0]
             
-            values, indices = values[np.isin(indices_values, indices_intersected)], indices_values[np.isin(indices_values, indices_intersected)]
+            if self.values is not None:
+                values = self.values
+                indices_values = self.indices
+                indices_other = other.indices
+            elif other.values is not None:
+                values = other.values
+                indices_values = other.indices
+                indices_other = self.indices
+            else:
+                values = None
+                indices_values = self.indices
+                indices_other = other.indices
+            
+            
+            if indices_values is None and indices_other is None:
+                indices = None
+            else:
+                indices_intersected = np.arange(self.nrows)
+                if indices_values is not None:
+                    indices_intersected = np.intersect1d(indices_intersected, indices_values)
+                if other.indices is not None:
+                    indices_intersected = np.intersect1d(indices_intersected, indices_other)
+                
+                values, indices = values[np.isin(indices_values, indices_intersected)], indices_values[np.isin(indices_values, indices_intersected)]
 
-        name_tuple = (self.name_tuple, other.name_tuple)
-        return Vector(
-            name_tuple=name_tuple,
-            values=values,
-            indices=indices,
-            nrows=nrows,
-            fill_values=fill_values, # Not yet implemented: Non-zero fill-value
-            dtype='numerical',
-        )
+            name_tuple = (self.name_tuple, other.name_tuple)
+            return Vector(
+                name_tuple=name_tuple,
+                values=values,
+                indices=indices,
+                nrows=nrows,
+                fill_values=fill_values, # Not yet implemented: Non-zero fill-value
+                dtype='numerical',
+            )
+        elif isinstance(other, Matrix):
+            return other & self
+        else:
+            raise NotImplementedError(f'__and__ not implemented for type {type(other)}.')
     
     def todense(self):
         values = np.zeros(self.nrows)
@@ -154,6 +146,22 @@ class Vector():
     
     def topd(self):
         return pd.Series(self.todense(), name=self.name_tuple)
+    
+    def shift(self, n: int):
+        indices = (np.arange(self.nrows) if self.indices is None else self.indices) + n
+        values = self.values[(indices >= 0)&(indices < self.nrows)] if self.values is not None else None
+        indices = indices[(indices >= 0)&(indices < self.nrows)]
+        return Vector(
+            name_tuple=tuple(list(self.name_tuple) + [f'shift_{n}']),
+            values=values,
+            indices=indices,
+            nrows=self.nrows,
+            fill_values=self.fill_values,
+            dtype=self.dtype,
+        )
+    
+    def shift_multiple(self, ns: List[int]):
+        return Matrix(*[self.shift(n=n) for n in ns])
 
 
 class Matrix():
@@ -162,10 +170,10 @@ class Matrix():
             *list_subcomponents: List[Vector],
             **dict_subcomponents: Dict[str, Vector],
         ):
-        dict_subcomponents_from_list = {subcomponent.name_tuple: subcomponent for subcomponent in list_subcomponents}
-        assert len(dict_subcomponents_from_list) == len(list_subcomponents), 'All subcomponents must have unique names.'
+        dict_subcomponents_from_list = {subcomponent.name_tuple: subcomponent for subcomponent in list_subcomponents if isinstance(subcomponent, Vector)}
+        dict_subcomponents_from_list = dict_subcomponents_from_list | {k_submatrix: v_submatrix for subcomponent in list_subcomponents if isinstance(subcomponent, Matrix) for k_submatrix, v_submatrix in subcomponent.subcomponents.items()}
+        assert len(dict_subcomponents_from_list) == sum([subcomponent.ncols for subcomponent in list_subcomponents]), 'All subcomponents must have unique names.'
         subcomponents = dict_subcomponents_from_list | dict_subcomponents
-        assert len(subcomponents) == len(list_subcomponents) + len(dict_subcomponents), 'All subcomponents must have unique names.'
         set_nrows = set([component.nrows for component in subcomponents.values()])
         assert len(set_nrows) == 1, 'All vectors in a matrix must have the same number of nrows.'
         for key_subcomponent, subcomponent in subcomponents.items():
@@ -184,62 +192,44 @@ class Matrix():
     def __iter__(self):
         return iter(self.subcomponents.values())
     
+    def __and__(self, other):
+        if isinstance(other, Vector):
+            return Matrix(
+                *[self_subcomponent & other for self_subcomponent in self.subcomponents.values()]
+            )
+        elif isinstance(other, Matrix):
+            return other & self
+        else:
+            raise NotImplementedError(f'__and__ not implemented for type {type(other)}.')
+    
     def __getitem__(self, key):
+        # List of keys will return a Matrix selected by each of the keys
+        # Single key will return a Vector selected by the key
+        # Key as a string will return a Matrix with all subcomponents that have that name as the first tuple entry
+        # Key as a tuple will return a Vector selected very specifically by the entire key
         assert not isinstance(key, slice), 'Slicing not allowed for Matrices.'
-
+        
         # If the get item key type is a list
         if isinstance(key, list):
             return Matrix(*[self[single_key] for single_key in key])
         
-        elif key in self.subcomponents:
+        elif (isinstance(key, str) or isinstance(key, tuple)) and key in self.subcomponents:
             return self.subcomponents[key]
         
-        elif isinstance(key, str) and (key,) in self.subcomponents:
-            return self.subcomponents[(key,)]
+        elif isinstance(key, str):
+            all_with_key = [subcomponent for subcomponent in self.subcomponents.values() if
+                               (isinstance(subcomponent.name_tuple, tuple) and key == subcomponent.name_tuple[0])
+                            or (isinstance(subcomponent.name_tuple, str) and key == subcomponent.name_tuple)]
+            
+            if len(all_with_key) == 0:
+                raise KeyError(f'No subcomponents found with the first key entry: "{key}". The only subcomponents are: {[subcomponent.name_tuple for subcomponent in self.subcomponents.values()]}')
+            elif len(all_with_key) == 1:
+                return all_with_key[0]
+            else:
+                return Matrix(*all_with_key)
         
-        # If the key type is a tuple return an intersection of the subcomponents' indices where only one subcomponent is allowed to have a non-none value
-        elif isinstance(key, tuple) and len(key) > 1:
-            subcomponents_queried = [self[single_key] for single_key in key]
-
-            # Create a variable to represent the values of the single (or zero) subcomponent that has non-none values
-            lst_subcomponents_with_values = [subcomponent for subcomponent in subcomponents_queried if subcomponent.values is not None]
-
-            # Assert values is not none for only one subcomponent
-            assert len(lst_subcomponents_with_values) <= 1, 'A maximum of one subcomponent can have values <> None.'
-            
-            set_nrows = set([subcomponent.nrows for subcomponent in subcomponents_queried])
-            assert len(set_nrows) == 1, 'All subcomponents must have the same number of nrows.'
-
-            set_fill_values = set([subcomponent.fill_values for subcomponent in subcomponents_queried])
-            assert len(set_fill_values) == 1, 'All subcomponents must have the same fill values.'
-            
-            # Create a list of all subcomponent indices
-            lst_indices = [subcomponent.indices if subcomponent.indices is not None else np.arange(subcomponent.nrows) for subcomponent in subcomponents_queried]
-
-            # Filter all indices and values to only include those that are in the intersection of the subcomponent indices
-            for i, indices in enumerate(lst_indices):
-                indices_intersected = indices if i == 0 else np.intersect1d(indices_intersected, indices)
-            
-            values_indices_intersected = [(subcomponent.values[np.isin(subcomponent.indices, indices_intersected)],
-                                           subcomponent.indices[np.isin(subcomponent.indices, indices_intersected)]
-                                          ) for subcomponent in lst_subcomponents_with_values]
-            
-            values_intersected = [subcomponent[0] for subcomponent in values_indices_intersected]
-            
-            indices_intersected = [subcomponent[1] for subcomponent in values_indices_intersected]
-
-
-            name_tuple = tuple([subcomponent.name_tuple for subcomponent in subcomponents_queried])
-            return Vector(
-                name_tuple=name_tuple,
-                values=values_intersected[0],
-                indices=indices_intersected[0],
-                nrows=list(set_nrows)[0],
-                fill_values=list(set_fill_values)[0], # Not yet implemented: Non-zero fill-value
-                dtype='numerical',
-            )
         else:
-            raise KeyError('Key must be a single str found in Matrix key, tuple comprised of keys found in Matrix, or list thereof.')
+            raise KeyError('Key must be a single str or key found in Matrix or a list thereof.')
     
     def todense(self):
         values = np.zeros((self.nrows, self.ncols))
@@ -250,14 +240,20 @@ class Matrix():
     def topd(self):
         return pd.DataFrame(self.todense(), columns=list(self.subcomponents.keys()))
 
+    def shift(self, n: int):
+        return Matrix(*[subcomponent.shift(n=n) for subcomponent in self.subcomponents.values()])
+    
+    def shift_multiple(self, ns: List[int]):
+        return Matrix(*[subcomponent.shift_multiple(ns=ns) for subcomponent in self.subcomponents.values()])
+
 
 if __name__ == '__main__':
     # Test Vector
     vec = Vector(
-        name_tuple=('a',),
+        name_tuple=('vec_test',),
         values=np.array([1, 2, 3]),
         indices=np.array([0, 1, 2]),
-        nrows=5,
+        nrows=9,
         fill_values=0,
         dtype='numerical',
     )
@@ -265,12 +261,11 @@ if __name__ == '__main__':
 
     # Test Matrix
     mat = Matrix(
-        vec,
         Vector(
             name_tuple=('a', 'b'),
             values=np.array([4, 5, 6]),
             indices=np.array([1, 2, 3]),
-            nrows=5,
+            nrows=9,
             fill_values=0,
             dtype='numerical',
         ),
@@ -278,31 +273,30 @@ if __name__ == '__main__':
             name_tuple=('b', 'c'),
             values=np.array([7, 8, 9]),
             indices=np.array([2, 3, 4]),
-            nrows=5,
+            nrows=9,
             fill_values=0,
             dtype='numerical',
         ),
         Vector(
             name_tuple=('d',),
             indices=np.array([2, 3]),
-            nrows=5,
+            nrows=9,
             fill_values=0,
             dtype='numerical',
         )
     )
     print(mat.todense())
     print(mat.topd())
-    print(mat['a',].todense())
-    print(mat['a',].topd())
+    print(mat['a'].todense())
+    print(mat['a'].topd())
     print(mat['a', 'b'].todense())
     print(mat['a', 'b'].topd())
     print(mat['b', 'c'].todense())
     print(mat['b', 'c'].topd())
     print(mat[['a', 'd']].todense())
     print(mat[['a', 'd']].topd())
-    print(mat[[('a', 'd')]].todense())
-    print(mat[[('a', 'd')]].topd())
 
+    print()
 
     # Test Vector Categorical
     cat = construct_vector_or_matrix(
@@ -316,6 +310,47 @@ if __name__ == '__main__':
     print(cat)
     print(cat.todense())
     print(cat.topd())
+    try:
+        print(cat['a'].topd())
+        assert False, 'Should not be able to select a category from a categorical vector.'
+    except KeyError:
+        pass
+    print(cat['category'].topd())
+
+    combined_mat_cat = Matrix(
+        vec,
+        mat,
+        cat,
+    )
+    print('Matrix Setup')
+    print(combined_mat_cat)
+    print(combined_mat_cat.todense())
+    print(combined_mat_cat.topd())
+
+
+    cat_subselected = combined_mat_cat['category']
+    cat_0_subselected = combined_mat_cat[('category', '0')]
+    vec_subselected = combined_mat_cat['vec_test']
+    print('ampersand test')
+    print(cat_subselected.topd())
+    print(cat_0_subselected.topd())
+    print(vec_subselected.topd())
+    print((vec_subselected & cat_0_subselected).topd())
+    print((vec_subselected & cat_subselected).topd())
+    print((cat_0_subselected & vec_subselected).topd())
+    print((cat_subselected & vec_subselected).topd())
+
+    print('shift test')
+    print(cat_subselected.shift(-2).topd())
+    print(cat_subselected.shift(2).topd())
+    print(cat_0_subselected.shift(-2).topd())
+    print(cat_0_subselected.shift(2).topd())
+    print(vec_subselected.shift(-2).topd())
+    print(vec_subselected.shift(2).topd())
+
+    print(cat_subselected.shift_multiple([-2, 0, 2]).topd())
+    print(cat_0_subselected.shift_multiple([-2, 0, 2]).topd())
+    print(vec_subselected.shift_multiple([-2, 0, 2]).topd())
 
     print()
 
