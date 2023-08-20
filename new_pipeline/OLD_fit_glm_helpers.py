@@ -4,6 +4,27 @@ import pandas as pd
 import scipy.sparse
 
 
+# From onehot to value / index
+if __name__ == '__main__':
+    arr = np.array([1, 0, 0, 0, 1, 0, 0])
+    # print(np.unique(arr, return_inverse=True))
+    print(np.arange(len(arr))[arr != 0])
+
+def densified_sparse_to_sparse(densified_sparse, fill_value=0):
+    nrows = densified_sparse.shape[0]
+    sparse_indices = np.arange(nrows)[densified_sparse != fill_value]
+    sparse_values = densified_sparse[sparse_indices]
+
+    unq_sparse_values = np.unique(sparse_values)
+    if len(unq_sparse_values) == 1 and unq_sparse_values[0] == 1:
+        sparse_values = None
+
+    return {'indices': sparse_indices, 'values': sparse_values, 'nrows': nrows}
+
+# From onehot to value / index
+if __name__ == '__main__':
+    arr = np.array([1, 0, 0, 0, 1, 0, 0])
+    print(densified_sparse_to_sparse(np.array([1, 0, 0, 0, 1, 0, 0]), fill_value=0))
 
 
 def construct_vector_or_matrix(
@@ -16,7 +37,7 @@ def construct_vector_or_matrix(
     ):
 
     assert (values is not None) or (indices is not None), 'At least one of values or indices must be specified.'
-    assert fill_values == 0, 'Non-zero fill-values not yet implemented.'
+    # assert fill_values == 0, 'Non-zero fill-values not yet implemented.'
 
     indices_arangeFilled = indices if indices is not None else np.arange(len(values))
     dtype = dtype if dtype is not None else 'numerical' # self.
@@ -67,7 +88,7 @@ class Vector():
         ):
 
         assert (values is not None) or (indices is not None), 'At least one of values or indices must be specified.'
-        assert fill_values == 0 or fill_values is None, 'Non-zero fill-values not yet implemented.'
+        # assert fill_values == 0 or fill_values is None, 'Non-zero fill-values not yet implemented.'
         assert dtype == 'numerical' or dtype is None, 'Vectors must be of dtype numerical. If categorical, create a Matrix via construct_vector_or_matrix.'
 
         self.name_tuple = name_tuple
@@ -139,7 +160,7 @@ class Vector():
             raise NotImplementedError(f'__and__ not implemented for type {type(other)}.')
     
     def todense(self):
-        values = np.zeros(self.nrows)
+        values = np.full(self.nrows, self.fill_values)
         indices_arangeFilled = self.indices if self.indices is not None else np.arange(len(values))
         values[indices_arangeFilled] = self.values if self.values is not None else 1
         return values
@@ -167,18 +188,42 @@ class Vector():
 class Matrix():
     def __init__(
             self,
-            *list_subcomponents: List[Vector],
-            **dict_subcomponents: Dict[str, Vector],
+            *list_subcomponents: List[Union[Vector, 'Matrix']],
+            **dict_subcomponents: Dict[str, Union[Vector, 'Matrix']],
         ):
-        dict_subcomponents_from_list = {subcomponent.name_tuple: subcomponent for subcomponent in list_subcomponents if isinstance(subcomponent, Vector)}
-        dict_subcomponents_from_list = dict_subcomponents_from_list | {k_submatrix: v_submatrix for subcomponent in list_subcomponents if isinstance(subcomponent, Matrix) for k_submatrix, v_submatrix in subcomponent.subcomponents.items()}
-        assert len(dict_subcomponents_from_list) == sum([subcomponent.ncols for subcomponent in list_subcomponents]), 'All subcomponents must have unique names.'
-        subcomponents = dict_subcomponents_from_list | dict_subcomponents
+
+        list_subcomponents_flattened = []
+        for subcomponent in list_subcomponents:
+            if isinstance(subcomponent, Vector):
+                list_subcomponents_flattened.append(subcomponent)
+            elif isinstance(subcomponent, Matrix):
+                list_subcomponents_flattened += list(subcomponent.subcomponents.values())
+            else:
+                raise NotImplementedError(f'__init__ not implemented for type {type(subcomponent)}.')
+        
+        dict_subcomponents_flattened = {}
+        for name_subcomponent, subcomponent in dict_subcomponents.items():
+            if isinstance(subcomponent, Vector):
+                dict_subcomponents_flattened[name_subcomponent] = subcomponent
+            elif isinstance(subcomponent, Matrix):
+                for name_subsubcomponent, subsubcomponent in subcomponent.subcomponents.items():
+                    dict_subcomponents_flattened[(name_subcomponent, name_subsubcomponent)] = subcomponent.subcomponents.values()
+            else:
+                raise NotImplementedError(f'__init__ not implemented for type {type(subcomponent)}.')
+
+        dict_subcomponents_from_list = {subcomponent.name_tuple: subcomponent for subcomponent in list_subcomponents_flattened if isinstance(subcomponent, Vector)}
+        dict_subcomponents_from_list = dict_subcomponents_from_list | {k_submatrix: v_submatrix for subcomponent in list_subcomponents_flattened if isinstance(subcomponent, Matrix) for k_submatrix, v_submatrix in subcomponent.subcomponents.items()}
+        assert len(dict_subcomponents_from_list) == sum([subcomponent.ncols for subcomponent in list_subcomponents_flattened]), 'All subcomponents must have unique names.'
+        subcomponents = dict_subcomponents_from_list | dict_subcomponents_flattened
         set_nrows = set([component.nrows for component in subcomponents.values()])
         assert len(set_nrows) == 1, 'All vectors in a matrix must have the same number of nrows.'
         for key_subcomponent, subcomponent in subcomponents.items():
             assert isinstance(subcomponent, Vector), 'All subcomponents must be of type Vector.'
         self.subcomponents = subcomponents
+
+        set_fill_values = set([subcomponent.fill_values for subcomponent in self.subcomponents.values()])
+        assert len(set_fill_values) == 1, 'All subcomponents must have the same fill values.'
+        self.fill_values = list(set_fill_values)[0]
 
         self.ncols = sum([subcomponent.ncols for subcomponent in subcomponents.values()])
         self.nrows = list(set_nrows)[0]
@@ -216,7 +261,7 @@ class Matrix():
         elif (isinstance(key, str) or isinstance(key, tuple)) and key in self.subcomponents:
             return self.subcomponents[key]
         
-        elif isinstance(key, str):
+        elif (isinstance(key, str) or isinstance(key, tuple)):
             all_with_key = [subcomponent for subcomponent in self.subcomponents.values() if
                                (isinstance(subcomponent.name_tuple, tuple) and key == subcomponent.name_tuple[0])
                             or (isinstance(subcomponent.name_tuple, str) and key == subcomponent.name_tuple)]
@@ -232,7 +277,7 @@ class Matrix():
             raise KeyError('Key must be a single str or key found in Matrix or a list thereof.')
     
     def todense(self):
-        values = np.zeros((self.nrows, self.ncols))
+        values = np.full((self.nrows, self.ncols), self.fill_values)
         for i, subcomponent in enumerate(self.subcomponents.values()):
             values[:, i] = subcomponent.todense()
         return values
@@ -247,167 +292,167 @@ class Matrix():
         return Matrix(*[subcomponent.shift_multiple(ns=ns) for subcomponent in self.subcomponents.values()])
 
 
-if __name__ == '__main__':
-    # Test Vector
-    vec = Vector(
-        name_tuple=('vec_test',),
-        values=np.array([1, 2, 3]),
-        indices=np.array([0, 1, 2]),
-        nrows=9,
-        fill_values=0,
-        dtype='numerical',
-    )
-    print(vec)
-
-    # Test Matrix
-    mat = Matrix(
-        Vector(
-            name_tuple=('a', 'b'),
-            values=np.array([4, 5, 6]),
-            indices=np.array([1, 2, 3]),
-            nrows=9,
-            fill_values=0,
-            dtype='numerical',
-        ),
-        Vector(
-            name_tuple=('b', 'c'),
-            values=np.array([7, 8, 9]),
-            indices=np.array([2, 3, 4]),
-            nrows=9,
-            fill_values=0,
-            dtype='numerical',
-        ),
-        Vector(
-            name_tuple=('d',),
-            indices=np.array([2, 3]),
-            nrows=9,
-            fill_values=0,
-            dtype='numerical',
-        )
-    )
-    print(mat.todense())
-    print(mat.topd())
-    print(mat['a'].todense())
-    print(mat['a'].topd())
-    print(mat['a', 'b'].todense())
-    print(mat['a', 'b'].topd())
-    print(mat['b', 'c'].todense())
-    print(mat['b', 'c'].topd())
-    print(mat[['a', 'd']].todense())
-    print(mat[['a', 'd']].topd())
-
-    print()
-
-    # Test Vector Categorical
-    cat = construct_vector_or_matrix(
-        name='category',
-        values=np.array([0, 1, 'a', 'a', 1]),
-        indices=np.array([1, 2, 5, 6, 8]),
-        nrows=9,
-        fill_values=0,
-        dtype='categorical',
-    )
-    print(cat)
-    print(cat.todense())
-    print(cat.topd())
-    try:
-        print(cat['a'].topd())
-        assert False, 'Should not be able to select a category from a categorical vector.'
-    except KeyError:
-        pass
-    print(cat['category'].topd())
-
-    combined_mat_cat = Matrix(
-        vec,
-        mat,
-        cat,
-    )
-    print('Matrix Setup')
-    print(combined_mat_cat)
-    print(combined_mat_cat.todense())
-    print(combined_mat_cat.topd())
-
-
-    cat_subselected = combined_mat_cat['category']
-    cat_0_subselected = combined_mat_cat[('category', '0')]
-    vec_subselected = combined_mat_cat['vec_test']
-    print('ampersand test')
-    print(cat_subselected.topd())
-    print(cat_0_subselected.topd())
-    print(vec_subselected.topd())
-    print((vec_subselected & cat_0_subselected).topd())
-    print((vec_subselected & cat_subselected).topd())
-    print((cat_0_subselected & vec_subselected).topd())
-    print((cat_subselected & vec_subselected).topd())
-
-    print('shift test')
-    print(cat_subselected.shift(-2).topd())
-    print(cat_subselected.shift(2).topd())
-    print(cat_0_subselected.shift(-2).topd())
-    print(cat_0_subselected.shift(2).topd())
-    print(vec_subselected.shift(-2).topd())
-    print(vec_subselected.shift(2).topd())
-
-    print(cat_subselected.shift_multiple([-2, 0, 2]).topd())
-    print(cat_0_subselected.shift_multiple([-2, 0, 2]).topd())
-    print(vec_subselected.shift_multiple([-2, 0, 2]).topd())
-
-    print()
-
-# Dense matrix constructed from just values (DV) gets associated with arange implied indices
-
-
-# Sparse matrix constructed from just indices (SI) gets ones associated with specified indices and non-specified indices get zeros otherwise within shape of rows
-
-
-# Sparse matrix constructed from both indices and values (SIV) gets values associated with indices and non-specified indices get zeros otherwise within shape of rows
-
-
-# Dense categorical values (DC) are subsegmented into sparse matrices with each segmenttion of categories being indicated by the unique values of the categorical variable 
-
-
-# Sparse categorical values (SC) are subsegmented into sparse matrices with each segmenttion of categories being indicated by the unique values of the categorical variable (except value 0 being unassociated)
-
-
-
-# class SparseMatrix():
-#     """
-#     A class for storing sparse matrices.
-
-#     JZ 2023
-#     """
-#     def __init__(
-#             self,
-#             dense_matrix: Optional[Union[np.ndarray, pd.DataFrame]]=None,
-#             data: Optional[np.ndarray]=None,
-#             indices: Optional[np.ndarray]=None,
-#             indptr: Optional[np.ndarray]=None,
-#             nrows: Optional[int]=None,
-#             ncols: Optional[int]=None,
-#             mappings_plus_inverses: Tuple[np.ndarray, np.ndarray]=None,
-#             fill_value: float=np.nan,
-#         ):
-
-#         self.mappings, self.mapped_inverses = np.unique(data, return_inverse=True) if mappings_plus_inverses is None else mappings_plus_inverses
-
-#         self._mappings = np.concatenate([np.array([fill_value]), ])
-
-#         self.data = []
-#         self.indices = []
-#         self.indptr = []
-#         self.shape = []
-
 # if __name__ == '__main__':
-#     original_data = np.array(list(reversed([1, 2, 3, 4, 5, 6, 7, 8, 9])))
-#     print(f'original_data = {original_data}')
-#     sparse = SparseMatrix(
-#         data=original_data,
-#         indices=np.array([0, 1, 2, 0, 1, 2, 0, 1, 2]),
-#         indptr=np.array([0, 3, 6, 9]),
-#         nrows=3,
-#         ncols=3,
+#     # Test Vector
+#     vec = Vector(
+#         name_tuple=('vec_test',),
+#         values=np.array([1, 2, 3]),
+#         indices=np.array([0, 1, 2]),
+#         nrows=9,
+#         fill_values=0,
+#         dtype='numerical',
 #     )
-#     print(f'{sparse.mappings=}')
-#     print(f'{sparse.mapped_inverses=}')
-#     reconstructed = sparse.mappings[sparse.mapped_inverses]
-#     print(f'{reconstructed=}')
+#     print(vec)
+
+#     # Test Matrix
+#     mat = Matrix(
+#         Vector(
+#             name_tuple=('a', 'b'),
+#             values=np.array([4, 5, 6]),
+#             indices=np.array([1, 2, 3]),
+#             nrows=9,
+#             fill_values=0,
+#             dtype='numerical',
+#         ),
+#         Vector(
+#             name_tuple=('b', 'c'),
+#             values=np.array([7, 8, 9]),
+#             indices=np.array([2, 3, 4]),
+#             nrows=9,
+#             fill_values=0,
+#             dtype='numerical',
+#         ),
+#         Vector(
+#             name_tuple=('d',),
+#             indices=np.array([2, 3]),
+#             nrows=9,
+#             fill_values=0,
+#             dtype='numerical',
+#         )
+#     )
+#     print(mat.todense())
+#     print(mat.topd())
+#     print(mat['a'].todense())
+#     print(mat['a'].topd())
+#     print(mat['a', 'b'].todense())
+#     print(mat['a', 'b'].topd())
+#     print(mat['b', 'c'].todense())
+#     print(mat['b', 'c'].topd())
+#     print(mat[['a', 'd']].todense())
+#     print(mat[['a', 'd']].topd())
+
+#     print()
+
+#     # Test Vector Categorical
+#     cat = construct_vector_or_matrix(
+#         name='category',
+#         values=np.array([0, 1, 'a', 'a', 1]),
+#         indices=np.array([1, 2, 5, 6, 8]),
+#         nrows=9,
+#         fill_values=0,
+#         dtype='categorical',
+#     )
+#     print(cat)
+#     print(cat.todense())
+#     print(cat.topd())
+#     try:
+#         print(cat['a'].topd())
+#         assert False, 'Should not be able to select a category from a categorical vector.'
+#     except KeyError:
+#         pass
+#     print(cat['category'].topd())
+
+#     combined_mat_cat = Matrix(
+#         vec,
+#         mat,
+#         cat,
+#     )
+#     print('Matrix Setup')
+#     print(combined_mat_cat)
+#     print(combined_mat_cat.todense())
+#     print(combined_mat_cat.topd())
+
+
+#     cat_subselected = combined_mat_cat['category']
+#     cat_0_subselected = combined_mat_cat[('category', '0')]
+#     vec_subselected = combined_mat_cat['vec_test']
+#     print('ampersand test')
+#     print(cat_subselected.topd())
+#     print(cat_0_subselected.topd())
+#     print(vec_subselected.topd())
+#     print((vec_subselected & cat_0_subselected).topd())
+#     print((vec_subselected & cat_subselected).topd())
+#     print((cat_0_subselected & vec_subselected).topd())
+#     print((cat_subselected & vec_subselected).topd())
+
+#     print('shift test')
+#     print(cat_subselected.shift(-2).topd())
+#     print(cat_subselected.shift(2).topd())
+#     print(cat_0_subselected.shift(-2).topd())
+#     print(cat_0_subselected.shift(2).topd())
+#     print(vec_subselected.shift(-2).topd())
+#     print(vec_subselected.shift(2).topd())
+
+#     print(cat_subselected.shift_multiple([-2, 0, 2]).topd())
+#     print(cat_0_subselected.shift_multiple([-2, 0, 2]).topd())
+#     print(vec_subselected.shift_multiple([-2, 0, 2]).topd())
+
+#     print()
+
+# # Dense matrix constructed from just values (DV) gets associated with arange implied indices
+
+
+# # Sparse matrix constructed from just indices (SI) gets ones associated with specified indices and non-specified indices get zeros otherwise within shape of rows
+
+
+# # Sparse matrix constructed from both indices and values (SIV) gets values associated with indices and non-specified indices get zeros otherwise within shape of rows
+
+
+# # Dense categorical values (DC) are subsegmented into sparse matrices with each segmenttion of categories being indicated by the unique values of the categorical variable 
+
+
+# # Sparse categorical values (SC) are subsegmented into sparse matrices with each segmenttion of categories being indicated by the unique values of the categorical variable (except value 0 being unassociated)
+
+
+
+# # class SparseMatrix():
+# #     """
+# #     A class for storing sparse matrices.
+
+# #     JZ 2023
+# #     """
+# #     def __init__(
+# #             self,
+# #             dense_matrix: Optional[Union[np.ndarray, pd.DataFrame]]=None,
+# #             data: Optional[np.ndarray]=None,
+# #             indices: Optional[np.ndarray]=None,
+# #             indptr: Optional[np.ndarray]=None,
+# #             nrows: Optional[int]=None,
+# #             ncols: Optional[int]=None,
+# #             mappings_plus_inverses: Tuple[np.ndarray, np.ndarray]=None,
+# #             fill_value: float=np.nan,
+# #         ):
+
+# #         self.mappings, self.mapped_inverses = np.unique(data, return_inverse=True) if mappings_plus_inverses is None else mappings_plus_inverses
+
+# #         self._mappings = np.concatenate([np.array([fill_value]), ])
+
+# #         self.data = []
+# #         self.indices = []
+# #         self.indptr = []
+# #         self.shape = []
+
+# # if __name__ == '__main__':
+# #     original_data = np.array(list(reversed([1, 2, 3, 4, 5, 6, 7, 8, 9])))
+# #     print(f'original_data = {original_data}')
+# #     sparse = SparseMatrix(
+# #         data=original_data,
+# #         indices=np.array([0, 1, 2, 0, 1, 2, 0, 1, 2]),
+# #         indptr=np.array([0, 3, 6, 9]),
+# #         nrows=3,
+# #         ncols=3,
+# #     )
+# #     print(f'{sparse.mappings=}')
+# #     print(f'{sparse.mapped_inverses=}')
+# #     reconstructed = sparse.mappings[sparse.mapped_inverses]
+# #     print(f'{reconstructed=}')
