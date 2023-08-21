@@ -2,6 +2,7 @@ from typing import DefaultDict, List, TypeVar, Optional, Union, Set, Tuple, Dict
 import numpy as np
 import pandas as pd
 import scipy.sparse
+from collections.abc import Iterable
 
 class VectorSparse():
     """
@@ -78,11 +79,13 @@ class VectorSparse():
             indices: Optional[np.ndarray] = None,
             sparse_value: Any = 0,
             filter_names: Set[str] = None,
+            shifted_amount: int = 0
         ):
         self.name = name
         self.filter_names = filter_names
         self.nrows = nrows
         self.sparse_value = sparse_value
+        self.shifted_amount = shifted_amount
 
         if indices is None and values is None:
             raise ValueError("At least one of indices and values must be specified")
@@ -246,7 +249,7 @@ class VectorSparse():
         """
         return self.nrows
 
-    def shift(self, shift: int) -> "VectorSparse":
+    def shift(self, shift: Union[int, List[int]]) -> Union["VectorSparse", "Matrix"]:
         """
         Shifts the indices of the VectorSparse by the specified amount
 
@@ -260,14 +263,34 @@ class VectorSparse():
         VectorSparse
             The VectorSparse with the shifted indices
         """
-        return self.__class__(
-            name=self.name,
-            nrows=self.nrows,
-            values=self.values,
-            indices=self.indices + shift,
-            sparse_value=self.sparse_value,
-            filter_names=self.filter_names
-        )
+        if type(shift) == int:
+            indices_init = self.indices + shift
+            values_init = self.values if self.values is not None else np.ones(len(indices_init))
+
+            if np.isnan(self.sparse_value) or shift == 0:
+                values = values_init if values_init is not None else None
+                indices = indices_init if indices_init is not None else None
+            elif shift > 0:
+                values = np.concatenate([np.full(shift, np.nan), values_init]) if values_init is not None else None
+                indices = np.concatenate([np.arange(shift), indices_init]) if indices_init is not None else None
+            else:
+                values = np.concatenate([values_init, np.full(np.abs(shift), np.nan)]) if values_init is not None else None
+                indices = np.concatenate([indices_init, self.nrows + np.arange(shift, 0)]) if indices_init is not None else None
+            
+            vector_shifted = self.__class__(
+                name=self.name,
+                nrows=self.nrows,
+                values=values,
+                indices=indices,
+                sparse_value=self.sparse_value,
+                filter_names=self.filter_names,
+            )
+            vector_shifted.shifted_amount = shift
+            return vector_shifted
+        elif type(shift) == list and all([type(x) == int for x in shift]):
+            return Matrix([self.shift(x) for x in shift])
+        else:
+            raise ValueError("shift must be an int or a list of ints")
     
     def to_dense(self) -> np.ndarray:
         """
@@ -287,13 +310,23 @@ class VectorSparse():
         if self.indices is None:
             return self.values
         else:
-            dense = np.full(self.nrows, self.sparse_value)
             indices = self.indices if self.indices is not None else np.arange(self.nrows)
             values = self.values if self.values is not None else np.ones(len(self.indices))
+            
+            if object in [values.dtype, type(self.sparse_value)]:
+                dtype = object
+            elif float in [values.dtype, type(self.sparse_value)]:
+                dtype = float
+            elif int in [values.dtype, type(self.sparse_value)]:
+                dtype = int
+            else:
+                dtype = values.dtype
+            
+            dense = np.full(self.nrows, self.sparse_value, dtype=dtype)
             dense[indices] = values
             return dense
     
-    def to_pd(self) -> pd.Series:
+    def to_pd(self, keep_shifted_amount_column: bool = False) -> pd.Series:
         """
         Returns the dense representation of the VectorSparse as a pandas Series
 
@@ -310,7 +343,22 @@ class VectorSparse():
 
         The name of the pandas Series is the name of the VectorSparse.
         """
-        return pd.Series(self.to_dense(), name=self.name)
+        base_name_set = {self.name} if self.name is not None else set()
+        base_name_set = base_name_set.union(set(self.filter_names)) if self.filter_names is not None else base_name_set
+        if len(base_name_set) == 0:
+            raise ValueError("VectorSparse must have a name")
+        elif len(base_name_set) == 1:
+            name = (base_name_set.pop(), self.shifted_amount) if keep_shifted_amount_column else base_name_set.pop()
+        else:
+            base_filter_name_set = set(self.filter_names).copy() if self.filter_names is not None else set()
+            if len(self.filter_names) == 0:
+                filter_names = ''
+            elif len(self.filter_names) == 1:
+                filter_names = base_filter_name_set.pop()
+            else:
+                filter_names = tuple(sorted(base_filter_name_set))
+            name = (self.name, filter_names, self.shifted_amount) if keep_shifted_amount_column else (self.name, filter_names)
+        return pd.Series(self.to_dense(), name=name)
 
     @classmethod
     def from_pd_dense(cls, series: pd.Series, sparse_value: Any = 0):
@@ -362,13 +410,17 @@ class VectorSparse():
         -----
         The name of the VectorSparse is the name of the pandas Series.
         """
+        name = values.name if values is not None else ''
+        filter_name = {indices.name} if indices is not None else set()
+        base_values = values.values if values is not None else None
+        base_indices = indices.values if indices is not None else None
         return cls(
-            name=values.name,
+            name=name,
             nrows=nrows,
-            values=values.values,
-            indices=indices.values,
+            values=base_values,
+            indices=base_indices,
             sparse_value=sparse_value,
-            filter_names={indices.name}
+            filter_names=filter_name
         )
 
 class VectorSparse_Category(VectorSparse):
@@ -581,7 +633,7 @@ class VectorSparse_Category(VectorSparse):
         )
     
     @classmethod
-    def from_pd_sparse(cls, nrows: int, indices: pd.Series, values: pd.Series, sparse_value: Any = 0):
+    def from_pd_sparse(cls, nrows: int, indices: Optional[pd.Series] = None, values: Optional[pd.Series] = None, sparse_value: Any = 0):
         """
         Creates a VectorSparse from a pandas Series
 
@@ -652,21 +704,22 @@ class Matrix:
         self.vectors = {}
         for component in components:
             if type(component) == Matrix:
-                for key, val in component.vectors.items():
+                for vector_key, vector_val in component.vectors.items():
+                    key = (vector_key, vector_val.shifted_amount) if vector_val.shifted_amount else vector_key
                     if key in self.vectors:
                         raise ValueError(f"vectors must have unique names, {key} is duplicated")
-                    self.vectors[key] = val
-            if component.name in self.vectors:
-                raise ValueError(f"vectors must have unique names, {component.name} is duplicated")
-            if component.filter_names is None or len(component.filter_names) == 0:
-                if component.name in self.vectors:
-                    raise ValueError(f"vectors must have unique names, {component.name} is duplicated")
-                self.vectors[component.name] = component
+                    self.vectors[key] = vector_val
             else:
-                key = (component.name, tuple(sorted(set(component.filter_names))))
+                key = (component.name, component.shifted_amount) if component.shifted_amount else component.name
                 if key in self.vectors:
-                    raise ValueError(f"vectors must have unique names, {key} is duplicated")
-                self.vectors[key] = component
+                    raise ValueError(f"vectors must have unique names, {component.name} is duplicated")
+                if component.filter_names is None or len(component.filter_names) == 0:
+                    self.vectors[key] = component
+                else:
+                    key = (component.name, tuple(sorted(set(component.filter_names))), component.shifted_amount) if component.shifted_amount else (component.name, tuple(sorted(set(component.filter_names))))
+                    if key in self.vectors:
+                        raise ValueError(f"vectors must have unique names, {key} is duplicated")
+                    self.vectors[key] = component
 
     def __repr__(self) -> str:
         """
@@ -733,8 +786,20 @@ class Matrix:
         second element of the tuple as the filter_names. If the key is a tuple of length 1, returns
         the VectorSparse with the first element of the tuple as the name and no filter_names.
         """
-        return self.vectors[key]
-
+        if isinstance(key, list):
+            return Matrix([self[x] for x in key])
+        else:
+            key = (key,) if isinstance(key, str) else key
+            vectors = {key_vector: vector for key_vector, vector in self.vectors.items()}
+            for isubkey, subkey in enumerate(key):
+                if type(subkey) == tuple and len(subkey) == 1:
+                    subkey = subkey[0]
+                vectors = {vector_key: vector for vector_key, vector in vectors.items() if subkey is None or (subkey in vector_key[isubkey] and len(subkey) > 0) or subkey == vector_key[isubkey]}
+            if len(vectors) == 1:
+                return list(vectors.values())[0]
+            elif len(vectors) > 1:
+                return Matrix([vector for vector in vectors.values()])
+    
     def intersect(self, indices: np.ndarray = None, filter_name: Set[str] = set()) -> "Matrix":
         """
         Intersects this Matrix with another Matrix or VectorSparse. The intersection of two Matrices
@@ -753,6 +818,27 @@ class Matrix:
             The intersection of this Matrix with the other Matrix or VectorSparse
         """
         return self.__class__([x.intersect(indices, filter_name) for x in self.vectors])
+    
+    def shift(self, shift: Union[int, List[int]]) -> Union["VectorSparse", "Matrix"]:
+        """
+        Shifts the indices of the VectorSparse by the specified amount
+
+        Parameters
+        ----------
+        shift: int
+            The amount to shift the indices by
+            
+        Returns
+        -------
+        VectorSparse
+            The VectorSparse with the shifted indices
+        """
+        if type(shift) == int:
+            return Matrix([component.shift(shift) for component in self.vectors.values()])
+        elif type(shift) in [list, range] and all([type(x) == int for x in shift]):
+            return Matrix([self.shift(x) for x in shift])
+        else:
+            raise ValueError("shift must be an int or a list of ints")
     
     def to_dense(self) -> np.ndarray:
         """
@@ -798,10 +884,11 @@ class Matrix:
         pd.DataFrame
             The dense representation of the Matrix as a pandas DataFrame
         """
-        return pd.concat([x.to_pd() for x in self.vectors.values()], axis=1)
+        keep_shifted_amount_column = len(set([x.shifted_amount for x in self.vectors.values()])) > 1
+        return pd.concat([x.to_pd(keep_shifted_amount_column=keep_shifted_amount_column) for x in self.vectors.values()], axis=1)
     
     @classmethod
-    def from_pd_dense_num(cls, dataframe: pd.DataFrame, sparse_value: Any = 0):
+    def from_pd_dense_num(cls, dataframe: Optional[pd.DataFrame] = None, sparse_value: Any = 0):
         """
         Creates a Matrix from a pandas DataFrame
 
@@ -822,7 +909,7 @@ class Matrix:
         return cls([VectorSparse.from_pd_dense(dataframe[col], sparse_value) for col in dataframe.columns])
     
     @classmethod
-    def from_pd_dense_cat(cls, dataframe: pd.DataFrame, sparse_value: Any = 0):
+    def from_pd_dense_cat(cls, dataframe: Optional[pd.DataFrame] = None, sparse_value: Any = 0):
         """
         Creates a Matrix from a pandas DataFrame
 
@@ -843,7 +930,7 @@ class Matrix:
         return cls([VectorSparse_Category.from_pd_dense(dataframe[col], sparse_value) for col in dataframe.columns])
     
     @classmethod
-    def from_pd_sparse_num(cls, nrows: int, indices: pd.DataFrame, values: pd.DataFrame, sparse_value: Any = 0):
+    def from_pd_sparse_num(cls, nrows: int, indices: Optional[pd.DataFrame] = None, values: Optional[pd.DataFrame] = None, sparse_value: Any = 0):
         """
         Creates a Matrix from a pandas DataFrame
 
@@ -861,10 +948,17 @@ class Matrix:
         -----
         The names of the VectorSparse objects in the Matrix are the column names of the pandas DataFrame.
         """
-        return cls([VectorSparse.from_pd_sparse(nrows, indices[index_col], values[val_col], sparse_value) for index_col in indices.columns for val_col in values.columns])
+        if indices is None and values is None:
+            raise ValueError("indices and values cannot both be None")
+        elif indices is None:
+            return cls([VectorSparse.from_pd_sparse(nrows, None, values[val_col], sparse_value) for val_col in values.columns])
+        elif values is None:
+            return cls([VectorSparse.from_pd_sparse(nrows, indices[index_col], None, sparse_value) for index_col in indices.columns])
+        else:
+            return cls([VectorSparse.from_pd_sparse(nrows, indices[index_col], values[val_col], sparse_value) for index_col in indices.columns for val_col in values.columns])
     
     @classmethod
-    def from_pd_sparse_cat(cls, nrows: int, indices: pd.DataFrame, values: pd.DataFrame, sparse_value: Any = 0):
+    def from_pd_sparse_cat(cls, nrows: int, indices: Optional[pd.DataFrame] = None, values: Optional[pd.DataFrame] = None, sparse_value: Any = 0):
         """
         Creates a Matrix from a pandas DataFrame
 
@@ -934,47 +1028,7 @@ if __name__ == '__main__':
     matrix = Matrix([vec_a, vec_d, vec_b])
     print(matrix.to_dense())
     print(matrix.to_pd())
-
+    
     print(Matrix([vec_a, vec_d]).to_pd())
     print((vec_a & vec_d).to_pd())
     
-    # def filter(self, filter_indices: np.ndarray):
-    #     if self.indices is None:
-    #         self.indices = filter_indices
-    #     else:
-    #         self.indices = np.intersect1d(self.indices, filter_indices)
-    #     elif type(filter_indices) in [list, np.ndarray]:
-    #         lst_filter_indices = [filter_indices] if type(filter_indices) == np.ndarray else filter_indices
-    #         if not all([type(x) == np.ndarray for x in filter_indices]):
-    #             raise ValueError("filter_indices must be a numpy array or a list of numpy arrays")
-    #         lst_filter_indices = filter_indices
-    #         indices = np.arange(self.nrows)
-    #         for filter_index in lst_filter_indices:
-    #             indices = np.intersect1d(indices, filter_index)
-    #         self.indices = indices
-    #     else:
-    #         raise ValueError("filter_indices must be a numpy array or a list of numpy arrays")
-
-    #     if values is None:
-    #         self.values = None
-    #     elif type(values) == np.ndarray:
-    #         if self.indices is not None and len(values) != len(self.indices):
-    #             raise ValueError("values must be the same length as filter_indices if both specified")
-                
-    #         self.values = values
-
-
-
-    # def to_dense(self):
-    #     pass
-
-    # def to_pd(self):
-    #     pass
-
-    # @classmethod
-    # def from_pd_sparse(cls, indices: pd.Series, values: pd.Series):
-    #     pass
-
-    # @classmethod
-    # def from_pd_dense(cls, values: pd.Series):
-    #     pass
