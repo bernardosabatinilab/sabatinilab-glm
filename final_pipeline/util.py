@@ -360,6 +360,29 @@ class VectorSparse():
             name = (self.name, filter_names, self.shifted_amount) if keep_shifted_amount_column else (self.name, filter_names)
         return pd.Series(self.to_dense(), name=name)
 
+    def rename(self, name: Union[str, Tuple[str, Tuple[str]]]) -> "VectorSparse":
+        """
+        Returns a new VectorSparse with a renamed value
+
+        Parameters
+        ----------
+        name: Union[str, Tuple[str, Tuple[str]]]
+            The new name of the VectorSparse
+        
+        Returns
+        -------
+        VectorSparse
+            The new VectorSparse with the renamed value
+        """
+        return self.__class__(
+            name=name,
+            nrows=self.nrows,
+            values=self.values,
+            indices=self.indices,
+            sparse_value=self.sparse_value,
+            filter_names=self.filter_names
+        )
+
     @classmethod
     def from_pd_dense(cls, series: pd.Series, sparse_value: Any = 0):
         """
@@ -575,8 +598,18 @@ class VectorSparse_Category(VectorSparse):
             sparse_value=self.sparse_value,
             filter_names=filter_names
         )
+    
+    def __repr__(self) -> str:
+        """
+        Returns a string representation of the VectorSparse
 
-        
+        Returns
+        -------
+        str
+            A string representation of the VectorSparse
+        """
+        return f"VectorSparse_Category(name={self.name}, nrows={self.nrows}, values={self.values}, indices={self.indices}, sparse_value={self.sparse_value}, filter_names={self.filter_names})"
+    
     def to_dense(self) -> np.ndarray:
         """
         Returns the dense representation of the VectorSparse
@@ -597,10 +630,24 @@ class VectorSparse_Category(VectorSparse):
         pd.DataFrame
             The dense representation of the VectorSparse as a pandas DataFrame
         """
-        return pd.DataFrame(
-            self.to_dense(),
-            columns=pd.MultiIndex.from_tuples(list(zip([self.name]*len(self.categories), self.categories.keys())))
-        )
+        
+        # return pd.DataFrame(
+        #     self.to_dense(),
+        #     columns=pd.MultiIndex.from_tuples(list(zip([self.name]*len(self.categories), self.categories.keys())))
+        # )
+
+        return self.to_matrix().to_pd()
+    
+    def to_matrix(self) -> "Matrix":
+        """
+        Returns the dense representation of the VectorSparse as a Matrix
+
+        Returns
+        -------
+        Matrix
+            The dense representation of the VectorSparse as a Matrix
+        """
+        return Matrix([self.categories[cat].rename((self.name, cat)) for cat in self.categories])
 
     @classmethod
     def from_pd_dense(cls, series: pd.Series, sparse_value: Any = 0):
@@ -703,6 +750,7 @@ class Matrix:
         
         self.vectors = {}
         for component in components:
+            component = component.to_matrix() if isinstance(component, VectorSparse_Category) else component.vectors.values()
             if type(component) == Matrix:
                 for vector_key, vector_val in component.vectors.items():
                     key = (vector_key, vector_val.shifted_amount) if vector_val.shifted_amount else vector_key
