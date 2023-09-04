@@ -4,7 +4,7 @@ import pandas as pd
 import scipy.sparse
 from collections.abc import Iterable
 
-class VectorSparse():
+class VectorSparse:
     """
     A sparse vector with a name and a number of rows. Can be intersected with another VectorSparse
     where at most one has values. If neither has values, the intersection is the intersection of
@@ -92,7 +92,7 @@ class VectorSparse():
 
         if values is None:
             self.values = None
-        elif type(values) == np.ndarray:
+        elif isinstance(values, np.ndarray):
             if self.sparse_value in values:
                 raise ValueError("values cannot contain sparse_value")
             self.values = values
@@ -101,7 +101,7 @@ class VectorSparse():
         
         if indices is None:
             self.indices = None
-        elif type(indices) == np.ndarray:
+        elif isinstance(indices, np.ndarray):
             self.indices = indices
         else:
             raise ValueError("indices must be a numpy array")
@@ -128,7 +128,7 @@ class VectorSparse():
         VectorSparse
             The intersection of this VectorSparse with the other VectorSparse
         """
-        assert type(filter_name) == set and all([type(x) == str for x in filter_name]), "filter_name must be a set of strings"
+        assert isinstance(filter_name, set) and all([isinstance(x, str) for x in filter_name]), "filter_name must be a set of strings"
         filter_names = self.filter_names if self.filter_names is not None else set()
         filter_names = filter_names.union(filter_name)
         if len(self.indices) == len(indices) and np.all(self.indices == indices):
@@ -183,7 +183,7 @@ class VectorSparse():
             return self.intersect(other.indices, filter_names.union({other.name}))
         else:
             return other.intersect(self.indices, filter_names.union({self.name}))
-        
+    
     def __repr__(self) -> str:
         """
         Returns a string representation of the VectorSparse
@@ -263,9 +263,15 @@ class VectorSparse():
         VectorSparse
             The VectorSparse with the shifted indices
         """
-        if type(shift) == int:
+        if isinstance(shift, int):
             indices_init = self.indices + shift
             values_init = self.values if self.values is not None else np.ones(len(indices_init))
+            
+            if indices_init is not None:
+                inx_in_bounds = (indices_init >= 0)&(indices_init < self.nrows)
+                indices_init = indices_init[inx_in_bounds]
+                if values_init is not None:
+                    values_init = values_init[inx_in_bounds]
 
             if np.isnan(self.sparse_value) or shift == 0:
                 values = values_init if values_init is not None else None
@@ -287,10 +293,38 @@ class VectorSparse():
             )
             vector_shifted.shifted_amount = shift
             return vector_shifted
-        elif type(shift) == list and all([type(x) == int for x in shift]):
+        elif isinstance(shift, list) and all([isinstance(x, int) for x in shift]):
             return Matrix([self.shift(x) for x in shift])
         else:
             raise ValueError("shift must be an int or a list of ints")
+    
+    def one_hots_to_inx(self) -> "VectorSparse":
+        """
+        Converts a one-hot encoded VectorSparse to an index VectorSparse
+
+        Returns
+        -------
+        VectorSparse
+            The index VectorSparse
+        """
+        assert len(np.unique(self.values)) == 1, "VectorSparse must have one unique value"
+        assert np.unique(self.values)[0] == 1, "Only value in VectorSparse must be 1"
+        assert self.sparse_value == 0, "sparse_value must be 0"
+        assert self.indices is not None, "VectorSparse must have indices"
+        assert self.values is not None, "VectorSparse must have values"
+
+        name = ''
+        name_set = {self.name}
+        filter_names = self.filter_names.union(name_set) if self.filter_names is not None else name_set
+        
+        return self.__class__(
+            name=name,
+            nrows=self.nrows,
+            values=None,
+            indices=self.indices,
+            sparse_value=self.sparse_value,
+            filter_names=filter_names
+        )
     
     def to_dense(self) -> np.ndarray:
         """
@@ -347,11 +381,11 @@ class VectorSparse():
         base_name_set = base_name_set.union(set(self.filter_names)) if self.filter_names is not None else base_name_set
         if len(base_name_set) == 0:
             raise ValueError("VectorSparse must have a name")
-        elif len(base_name_set) == 1:
-            name = (base_name_set.pop(), self.shifted_amount) if keep_shifted_amount_column else base_name_set.pop()
+        # elif len(base_name_set) == 1:
+        #     name = (base_name_set.pop(), self.shifted_amount) if keep_shifted_amount_column else base_name_set.pop()
         else:
             base_filter_name_set = set(self.filter_names).copy() if self.filter_names is not None else set()
-            if len(self.filter_names) == 0:
+            if self.filter_names is None or len(self.filter_names) == 0:
                 filter_names = ''
             elif len(self.filter_names) == 1:
                 filter_names = base_filter_name_set.pop()
@@ -524,9 +558,10 @@ class VectorSparse_Category(VectorSparse):
             indices: Optional[np.ndarray] = None,
             sparse_value: Any = 0,
             filter_names: Set[str] = None,
+            shifted_amount: int = 0
         ):
         indices = np.arange(nrows) if indices is None else indices
-        super(VectorSparse_Category, self).__init__(name, nrows, values, indices, sparse_value)
+        super(VectorSparse_Category, self).__init__(name, nrows, values, indices, sparse_value, filter_names, shifted_amount)
         categories_unique = np.unique(values)
         if len(categories_unique) < 2:
             raise ValueError("values for VectorSparse_Category must have at least two unique values")
@@ -540,6 +575,7 @@ class VectorSparse_Category(VectorSparse):
                 filter_names=filter_names
             ) for cat in categories_unique
         }
+        print()
     
     def __and__(self, other: Union[VectorSparse, "VectorSparse_Category"]) -> "VectorSparse_Category":
         """
@@ -558,7 +594,7 @@ class VectorSparse_Category(VectorSparse):
         VectorSparse
             The intersection of this VectorSparse_Category with the other VectorSparse or VectorSparse_Category
         """
-        if type(other) != VectorSparse_Category:
+        if not isinstance(other, VectorSparse_Category):
             return super(VectorSparse_Category, self).__and__(other)
         if self.values is None or other.values is None:
             raise ValueError("Both VectorSparse_Categories must have values")
@@ -745,23 +781,25 @@ class Matrix:
             self,
             components: List[Union["Matrix", VectorSparse, VectorSparse_Category]]
         ):
-        if type(components) != list or not all([type(x) in [VectorSparse_Category, VectorSparse, Matrix] for x in components]):
+        if not isinstance(components, list) or not all([type(x) in [VectorSparse_Category, VectorSparse, Matrix] for x in components]):
             raise ValueError("vectors must be a list of vectors or Matrices")
         
         self.vectors = {}
         for component in components:
-            component = component.to_matrix() if isinstance(component, VectorSparse_Category) else component.vectors.values()
-            if type(component) == Matrix:
-                for vector_key, vector_val in component.vectors.items():
+            if isinstance(component, VectorSparse_Category):
+                component = component.to_matrix()
+            if isinstance(component, Matrix):
+                component = component.vectors
+                for vector_key, vector_val in component.items():
                     key = (vector_key, vector_val.shifted_amount) if vector_val.shifted_amount else vector_key
                     if key in self.vectors:
                         raise ValueError(f"vectors must have unique names, {key} is duplicated")
                     self.vectors[key] = vector_val
             else:
-                key = (component.name, component.shifted_amount) if component.shifted_amount else component.name
-                if key in self.vectors:
-                    raise ValueError(f"vectors must have unique names, {component.name} is duplicated")
                 if component.filter_names is None or len(component.filter_names) == 0:
+                    key = (component.name, component.shifted_amount) if component.shifted_amount else component.name
+                    if key in self.vectors:
+                        raise ValueError(f"vectors must have unique names, {key} is duplicated")
                     self.vectors[key] = component
                 else:
                     key = (component.name, tuple(sorted(set(component.filter_names))), component.shifted_amount) if component.shifted_amount else (component.name, tuple(sorted(set(component.filter_names))))
@@ -806,9 +844,9 @@ class Matrix:
         Matrix
             The intersection of this Matrix with the other Matrix or VectorSparse
         """
-        if type(other) == VectorSparse or type(other) == VectorSparse_Category:
+        if isinstance(other, VectorSparse) or isinstance(other, VectorSparse_Category):
             return Matrix([x & other for x in self.vectors])
-        elif type(other) == Matrix:
+        elif isinstance(other, Matrix):
             return Matrix([x & y for x in self.vectors for y in other.vectors])
         else:
             raise ValueError("other must be a VectorSparse or Matrix")
@@ -840,7 +878,7 @@ class Matrix:
             key = (key,) if isinstance(key, str) else key
             vectors = {key_vector: vector for key_vector, vector in self.vectors.items()}
             for isubkey, subkey in enumerate(key):
-                if type(subkey) == tuple and len(subkey) == 1:
+                if isinstance(subkey, tuple) and len(subkey) == 1:
                     subkey = subkey[0]
                 vectors = {vector_key: vector for vector_key, vector in vectors.items() if subkey is None or (subkey in vector_key[isubkey] and len(subkey) > 0) or subkey == vector_key[isubkey]}
             if len(vectors) == 1:
@@ -881,12 +919,23 @@ class Matrix:
         VectorSparse
             The VectorSparse with the shifted indices
         """
-        if type(shift) == int:
+        if isinstance(shift, int):
             return Matrix([component.shift(shift) for component in self.vectors.values()])
-        elif type(shift) in [list, range] and all([type(x) == int for x in shift]):
+        elif type(shift) in [list, range] and all([isinstance(x, int) for x in shift]):
             return Matrix([self.shift(x) for x in shift])
         else:
             raise ValueError("shift must be an int or a list of ints")
+    
+    def one_hots_to_inx(self) -> "Matrix":
+        """
+        Converts a one-hot encoded VectorSparse to an index VectorSparse
+
+        Returns
+        -------
+        VectorSparse
+            The index VectorSparse
+        """
+        return Matrix([x.one_hots_to_inx() for x in self.vectors.values()])
     
     def to_dense(self) -> np.ndarray:
         """
