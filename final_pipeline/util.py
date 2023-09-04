@@ -128,7 +128,18 @@ class VectorSparse:
         VectorSparse
             The intersection of this VectorSparse with the other VectorSparse
         """
-        assert isinstance(filter_name, set) and all([isinstance(x, str) for x in filter_name]), "filter_name must be a set of strings"
+        if not isinstance(filter_name, set):
+            assert False, "filter_name must be a set of strings or a set of strings and tuples of strings"
+        else:
+            for entry in filter_name:
+                if isinstance(entry, str):
+                    pass
+                elif isinstance(entry, tuple):
+                    for subentry in entry:
+                        assert isinstance(subentry, str), "filter_name must be a set of strings or a set of strings and tuples of strings"
+                else:
+                    assert False, "filter_name must be a set of strings or a set of strings and tuples of strings"
+        
         filter_names = self.filter_names if self.filter_names is not None else set()
         filter_names = filter_names.union(filter_name)
         if len(self.indices) == len(indices) and np.all(self.indices == indices):
@@ -180,9 +191,29 @@ class VectorSparse:
         filter_names = self_filter_names.union(other_filter_names)
 
         if other.values is None:
-            return self.intersect(other.indices, filter_names.union({other.name}))
+            return self.intersect(other.indices, filter_names)
         else:
-            return other.intersect(self.indices, filter_names.union({self.name}))
+            return other.intersect(self.indices, filter_names)
+    
+    def __invert__(self) -> "VectorSparse":
+        """
+        Returns a VectorSparse with the values negated
+
+        Returns
+        -------
+        VectorSparse
+            A VectorSparse with the values negated
+        """
+        assert self.values is None, "VectorSparse must not have values in order to negate"
+        inverted_indices = np.setdiff1d(np.arange(self.nrows), self.indices)
+        return self.__class__(
+            name=self.name,
+            nrows=self.nrows,
+            values=None,
+            indices=inverted_indices,
+            sparse_value=-self.sparse_value,
+            filter_names=set({str(self.filter_names.union({'~'}))}), #set([f'~{filter_name}' for filter_name in list(self.filter_names)])
+        )
     
     def __repr__(self) -> str:
         """
