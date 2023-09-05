@@ -425,6 +425,22 @@ class VectorSparse:
             name = (self.name, filter_names, self.shifted_amount) if keep_shifted_amount_column else (self.name, filter_names)
         return pd.Series(self.to_dense(), name=name)
 
+    def set_sparse_value(self, sparse_value: Any) -> "VectorSparse":
+        """
+        Returns self with a new sparse_value after setting the value inplace
+
+        Parameters
+        ----------
+        sparse_value: Any
+            The new sparse_value of the VectorSparse
+        
+        Returns
+        -------
+        self
+        """
+        self.sparse_value = sparse_value
+        return self
+
     def rename(self, name: Union[str, Tuple[str, Tuple[str]]]) -> "VectorSparse":
         """
         Returns a new VectorSparse with a renamed value
@@ -606,7 +622,6 @@ class VectorSparse_Category(VectorSparse):
                 filter_names=filter_names
             ) for cat in categories_unique
         }
-        print()
     
     def __and__(self, other: Union[VectorSparse, "VectorSparse_Category"]) -> "VectorSparse_Category":
         """
@@ -705,6 +720,24 @@ class VectorSparse_Category(VectorSparse):
 
         return self.to_matrix().to_pd()
     
+    def set_sparse_value(self, sparse_value: Any) -> "VectorSparse":
+        """
+        Returns a new VectorSparse with a new sparse_value
+
+        Parameters
+        ----------
+        sparse_value: Any
+            The new sparse_value of the VectorSparse
+        
+        Returns
+        -------
+        VectorSparse
+            The new VectorSparse with the new sparse_value
+        """
+        super(VectorSparse_Category, self).set_sparse_value(sparse_value)
+        for cat, vector in self.categories.items():
+            vector.set_sparse_value(sparse_value)
+
     def to_matrix(self) -> "Matrix":
         """
         Returns the dense representation of the VectorSparse as a Matrix
@@ -911,7 +944,7 @@ class Matrix:
             for isubkey, subkey in enumerate(key):
                 if isinstance(subkey, tuple) and len(subkey) == 1:
                     subkey = subkey[0]
-                vectors = {vector_key: vector for vector_key, vector in vectors.items() if subkey is None or (subkey in vector_key[isubkey] and len(subkey) > 0) or subkey == vector_key[isubkey]}
+                vectors = {vector_key: vector for vector_key, vector in vectors.items() if subkey is None or subkey == vector_key or (subkey in vector_key[isubkey] and len(subkey) > 0) or subkey == vector_key[isubkey]}
             if len(vectors) == 1:
                 return list(vectors.values())[0]
             elif len(vectors) > 1:
@@ -1014,6 +1047,23 @@ class Matrix:
         """
         keep_shifted_amount_column = len(set([x.shifted_amount for x in self.vectors.values()])) > 1
         return pd.concat([x.to_pd(keep_shifted_amount_column=keep_shifted_amount_column) for x in self.vectors.values()], axis=1)
+    
+    def set_sparse_value(self, sparse_value: Any) -> "VectorSparse":
+        """
+        Returns a new VectorSparse with a new sparse_value
+
+        Parameters
+        ----------
+        sparse_value: Any
+            The new sparse_value of the VectorSparse
+        
+        Returns
+        -------
+        VectorSparse
+            The new VectorSparse with the new sparse_value
+        """
+        [vector.set_sparse_value(sparse_value) for key, vector in self.vectors.items()]
+        return self
     
     @classmethod
     def from_pd_dense_num(cls, dataframe: Optional[pd.DataFrame] = None, sparse_value: Any = 0):
